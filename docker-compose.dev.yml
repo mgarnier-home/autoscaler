@@ -1,0 +1,33 @@
+services:
+  autoscaler:
+    build:
+      context: autoscaler
+      dockerfile: ./Dockerfile
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      REGISTRATION_URL: "${REGISTRATION_URL}"
+      SCALE_SET_NAME: "${SCALE_SET_NAME}"
+      LABELS: "${LABELS}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+      RUNNER_IMAGE: "${RUNNER_IMAGE}"
+      DOCKER_REGISTRY_URL: "${DOCKER_REGISTRY_URL}"
+      DOCKER_REGISTRY_USERNAME: "${DOCKER_REGISTRY_USERNAME}"
+      DOCKER_REGISTRY_PASSWORD: "${DOCKER_REGISTRY_PASSWORD}"
+      ARTIFACTORY_TOKEN: "${ARTIFACTORY_TOKEN}"
+      DOCKER_HOSTS: "${DOCKER_HOSTS}"
+      DOCKER_RUNTIME: "${DOCKER_RUNTIME}"
+
+  registry-mirror:
+    container_name: registry-mirror
+    environment:
+      - REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io
+    image: registry:2
+    ports:
+      - "5000:5000"
+
+  runner:
+    image: runner
+    build:
+      context: runner
+      dockerfile: ./Dockerfile

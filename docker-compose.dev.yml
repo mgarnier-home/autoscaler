@@ -5,18 +5,16 @@ services:
       dockerfile: ./Dockerfile
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./config.yaml:/app/config.yaml:ro"
     environment:
       REGISTRATION_URL: "${REGISTRATION_URL}"
-      SCALE_SET_NAME: "${SCALE_SET_NAME}"
-      LABELS: "${LABELS}"
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
       RUNNER_IMAGE: "${RUNNER_IMAGE}"
       DOCKER_REGISTRY_URL: "${DOCKER_REGISTRY_URL}"
       DOCKER_REGISTRY_USERNAME: "${DOCKER_REGISTRY_USERNAME}"
       DOCKER_REGISTRY_PASSWORD: "${DOCKER_REGISTRY_PASSWORD}"
       ARTIFACTORY_TOKEN: "${ARTIFACTORY_TOKEN}"
-      DOCKER_HOSTS: "${DOCKER_HOSTS}"
-      DOCKER_RUNTIME: "${DOCKER_RUNTIME}"
+      CONFIG_FILE_PATH: "/app/config.yaml"
 
   registry-mirror:
     container_name: registry-mirror

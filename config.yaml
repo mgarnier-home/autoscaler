@@ -1,0 +1,20 @@
+- scaleSetName: "test-1"
+  maxRunners: 10
+  minRunner: 0
+  labels:
+    - "test-1"
+  runnerGroup: "default"
+  dockerHosts:
+    - name: "local"
+      runtime: "sysbox-runc"
+      url: "unix:///var/run/docker.sock"
+- scaleSetName: "test-2"
+  maxRunners: 10
+  minRunner: 0
+  labels:
+    - "test-2"
+  runnerGroup: "default"
+  dockerHosts:
+    - name: "local"
+      runtime: "sysbox-runc"
+      url: "unix:///var/run/docker.sock"

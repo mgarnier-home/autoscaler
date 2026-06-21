@@ -1,4 +1,4 @@
-module operis.fr/docker-autoscaler
+module mgarnier11.fr/docker-autoscaler
 
 go 1.26.4
 

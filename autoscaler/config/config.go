@@ -9,27 +9,41 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/actions/scaleset"
-	"operis.fr/docker-autoscaler/utils"
+	"gopkg.in/yaml.v3"
+	"mgarnier11.fr/docker-autoscaler/utils"
 )
 
+type DockerHost struct {
+	Name    string `yaml:"name"`
+	Runtime string `yaml:"runtime"`
+	Url     string `yaml:"url"`
+}
+
+type ScaleSetConfig struct {
+	MaxRunners   int      `yaml:"maxRunners"`
+	MinRunners   int      `yaml:"minRunners"`
+	ScaleSetName string   `yaml:"scaleSetName"`
+	Labels       []string `yaml:"labels"`
+	RunnerGroup  string   `yaml:"runnerGroup"`
+
+	DockerHosts []DockerHost `yaml:"dockerHosts"`
+}
+
 type AutoscalerConfig struct {
-	RegistrationURL  string   `key:"REGISTRATION_URL" required:"true"`
-	MaxRunners       int      `key:"MAX_RUNNERS" default-value:"10"`
-	MinRunners       int      `key:"MIN_RUNNERS" default-value:"0"`
-	ScaleSetName     string   `key:"SCALE_SET_NAME" required:"true"`
-	Labels           []string `key:"LABELS" required:"true"`
-	RunnerGroup      string   `key:"RUNNER_GROUP" default-value:"default"`
-	Token            string   `key:"GITHUB_TOKEN" required:"true"`
-	RunnerImage      string   `key:"RUNNER_IMAGE" required:"true"`
-	LogLevel         string   `key:"LOG_LEVEL" default-value:"info"`
-	LogFormat        string   `key:"LOG_FORMAT" default-value:"text"`
-	RegistryURL      string   `key:"DOCKER_REGISTRY_URL" required:"true"`
-	RegistryUsername string   `key:"DOCKER_REGISTRY_USERNAME" required:"true"`
-	RegistryPassword string   `key:"DOCKER_REGISTRY_PASSWORD" required:"true"`
-	ArtifactoryToken string   `key:"ARTIFACTORY_TOKEN" required:"true"`
-	DockerHosts      []string `key:"DOCKER_HOSTS" required:"true"`
-	DockerRuntime    string   `key:"DOCKER_RUNTIME" default-value:"runc"`
+	ConfigurationFilePath string `key:"CONFIG_FILE_PATH" default-value:"./config.yaml"`
+	ScaleSetsConfigs      []ScaleSetConfig
+
+	RegistrationURL string `key:"REGISTRATION_URL" required:"true"`
+	Token           string `key:"GITHUB_TOKEN" required:"true"`
+
+	RunnerImage      string `key:"RUNNER_IMAGE" required:"true"`
+	RegistryURL      string `key:"DOCKER_REGISTRY_URL" required:"true"`
+	RegistryUsername string `key:"DOCKER_REGISTRY_USERNAME" required:"true"`
+	RegistryPassword string `key:"DOCKER_REGISTRY_PASSWORD" required:"true"`
+	ArtifactoryToken string `key:"ARTIFACTORY_TOKEN" required:"true"`
+
+	LogLevel  string `key:"LOG_LEVEL" default-value:"info"`
+	LogFormat string `key:"LOG_FORMAT" default-value:"text"`
 }
 
 func (c *AutoscalerConfig) Logger() *slog.Logger {
@@ -63,30 +77,71 @@ func (c *AutoscalerConfig) Logger() *slog.Logger {
 	}
 }
 
-// BuildLabels returns the labels to use for the runner scale set.
-// If custom labels are provided, those are used; otherwise, the scale set name is used as the label.
-func (c *AutoscalerConfig) BuildLabels() []scaleset.Label {
-	if len(c.Labels) > 0 {
-		labels := make([]scaleset.Label, len(c.Labels))
-		for i, name := range c.Labels {
-			labels[i] = scaleset.Label{Name: strings.TrimSpace(name)}
-		}
-		return labels
-	}
-	return []scaleset.Label{{Name: c.ScaleSetName}}
-}
+func DecodeScaleSetsConfigs(configFilePath string) ([]ScaleSetConfig, []error) {
+	var scaleSets []ScaleSetConfig
 
-func (c *AutoscalerConfig) validate() []error {
+	fileContent, err := os.ReadFile(configFilePath)
+	if err != nil {
+		return nil, []error{fmt.Errorf("failed to read config file: %w", err)}
+	}
+
+	err = yaml.Unmarshal(fileContent, &scaleSets)
+	if err != nil {
+		return nil, []error{fmt.Errorf("failed to decode config file: %w", err)}
+	}
+
 	var errs []error
-	if _, err := url.ParseRequestURI(c.RegistrationURL); err != nil {
-		errs = append(errs, fmt.Errorf("Invalid REGISTRATION_URL: %v", err))
+
+	// Validate config and set default values
+	for i, scaleSet := range scaleSets {
+		// Validate scaleSetName
+		if strings.TrimSpace(scaleSet.ScaleSetName) == "" {
+			errs = append(errs, fmt.Errorf("scale set %d: 'name' cannot be empty", i))
+		}
+
+		// Validate maxRunners and minRunners
+		if scaleSet.MaxRunners < scaleSet.MinRunners {
+			errs = append(errs, fmt.Errorf("scale set %s: 'maxRunners' (%d) cannot be less than 'minRunners' (%d)", scaleSet.ScaleSetName, scaleSet.MaxRunners, scaleSet.MinRunners))
+		}
+
+		// Validate labels
+		if scaleSet.Labels == nil || len(scaleSet.Labels) == 0 {
+			errs = append(errs, fmt.Errorf("scale set %s: 'labels' cannot be empty", scaleSet.ScaleSetName))
+		}
+
+		// Set default runner group if not provided
+		if strings.TrimSpace(scaleSet.RunnerGroup) == "" {
+			scaleSet.RunnerGroup = "default"
+		}
+
+		// Validate DockerHosts
+		if scaleSet.DockerHosts == nil || len(scaleSet.DockerHosts) == 0 {
+			errs = append(errs, fmt.Errorf("scale set %s: 'dockerHosts' cannot be empty", scaleSet.ScaleSetName))
+		} else {
+			for j, host := range scaleSet.DockerHosts {
+				// Validate dockerHostName
+				if strings.TrimSpace(host.Name) == "" {
+					errs = append(errs, fmt.Errorf("scale set %s: docker host %d: 'name' cannot be empty", scaleSet.ScaleSetName, j))
+				}
+
+				// Validate dockerHostUrl
+				if strings.TrimSpace(host.Url) == "" {
+					errs = append(errs, fmt.Errorf("scale set %s: docker host %s: 'url' cannot be empty", scaleSet.ScaleSetName, host.Name))
+				} else if _, err := url.ParseRequestURI(host.Url); err != nil {
+					errs = append(errs, fmt.Errorf("scale set %s: docker host %s: invalid 'url': %v", scaleSet.ScaleSetName, host.Name, err))
+				}
+
+				// Validate dockerHostRuntime
+				if strings.TrimSpace(host.Runtime) == "" {
+					errs = append(errs, fmt.Errorf("scale set %s: docker host %s: 'runtime' cannot be empty", scaleSet.ScaleSetName, host.Name))
+				} else if host.Runtime != "runc" && host.Runtime != "sysbox-runc" {
+					errs = append(errs, fmt.Errorf("scale set %s: docker host %s: unsupported 'runtime': %s. Supported runtimes are: runc, sysbox-runc", scaleSet.ScaleSetName, host.Name, host.Runtime))
+				}
+			}
+		}
 	}
 
-	if c.MaxRunners < c.MinRunners {
-		errs = append(errs, fmt.Errorf("MAX_RUNNERS (%d) cannot be less than MIN_RUNNERS (%d)", c.MaxRunners, c.MinRunners))
-	}
-
-	return errs
+	return scaleSets, errs
 }
 
 func GetAutoscalerConfig() (autoscalerCfg *AutoscalerConfig, configErrors []error) {
@@ -102,6 +157,10 @@ func GetAutoscalerConfig() (autoscalerCfg *AutoscalerConfig, configErrors []erro
 		// On parse les fields de la struct autoscalerConfig pour récupérer les valeurs des variables d'environnement correspondantes
 		field := t.Field(i)
 		key := field.Tag.Get("key")
+		// Si la clé est vide, on ignore ce champ
+		if key == "" {
+			continue
+		}
 		defaultValue := field.Tag.Get("default-value")
 		required := field.Tag.Get("required") == "true"
 
@@ -156,7 +215,12 @@ func GetAutoscalerConfig() (autoscalerCfg *AutoscalerConfig, configErrors []erro
 		}
 	}
 
-	configErrors = append(configErrors, autoscalerCfg.validate()...)
+	scaleSets, errs := DecodeScaleSetsConfigs(autoscalerCfg.ConfigurationFilePath)
+	if errs != nil {
+		configErrors = append(configErrors, errs...)
+	} else {
+		autoscalerCfg.ScaleSetsConfigs = scaleSets
+	}
 
 	return autoscalerCfg, configErrors
 }

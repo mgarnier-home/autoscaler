@@ -1,0 +1,73 @@
+# Workflow requis pour tester l'autoscaler lors du developpement
+name: "Test autoscaler"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: test-1
+    steps:
+      - name: Test autoscaler
+        run: |
+          whoami
+          asdf --version
+          asdf plugin list
+          asdf list
+
+          asdf install terraform 1.13.3
+          asdf set -u terraform 1.13.3
+
+          terraform --version
+
+          docker --version
+          docker run --rm hello-world
+
+          asdf install nodejs 20.5.1
+          asdf set -u nodejs 20.5.1
+          node --version
+          npm --version
+
+          asdf install maven 3.9.9
+          asdf set -u maven 3.9.9
+          asdf install java adoptopenjdk-21.0.7+6.0.LTS
+          asdf set -u java adoptopenjdk-21.0.7+6.0.LTS
+
+          java -version
+          mvn --version
+
+          cat "$HOME/.m2/settings.xml"
+
+          cat << EOF > "Dockerfile"
+          FROM alpine:3.20
+          # Layer 1
+          RUN echo "Installing packages..." && \
+              apk add --no-cache curl bash
+
+          # Layer 2 (slow on purpose)
+          RUN echo "Simulating expensive step 1..." && \
+              sleep 10 && \
+              echo "done" > /tmp/step1
+
+          # Layer 3 (slow on purpose)
+          RUN echo "Simulating expensive step 2..." && \
+              sleep 10 && \
+              echo "done" > /tmp/step2
+
+          # Build argument to selectively invalidate cache
+          ARG CACHE_BUSTER=1
+          RUN echo "CACHE_BUSTER=${CACHE_BUSTER}" > /tmp/cachebuster
+
+          # Final layer
+          RUN echo "Final step..." && \
+              sleep 5 && \
+              echo "finished" > /tmp/final
+
+          CMD ["sh"]
+          EOF
+
+          docker buildx build \
+            --progress=plain \
+            --cache-from=type=local,src=/buildx-cache \
+            --cache-to=type=local,dest=/buildx-cache,mode=max \
+            -t test-buildx-cache .

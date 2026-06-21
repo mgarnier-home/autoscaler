@@ -37,7 +37,7 @@
 ## TODO
 
 - [x] Bugs qui crashent l'appli
-  - [x] Scaleset déja existant => crash
+  - [x] ScaleSet déja existant => crash
   - [x] Création d'un conteneur impossible => crash
   - [x] Arrêt d'un conteneur impossible => crash
 - [x] Récupérer l'image du runner au démarrage => l'image du runner étant présente dans le repo, il n'y aura pas de mise à jour de l'image sans mise à jour de l'autoscaler

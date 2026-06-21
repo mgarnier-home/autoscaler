@@ -16,7 +16,7 @@ import (
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
-	"operis.fr/docker-autoscaler/config"
+	"mgarnier11.fr/docker-autoscaler/config"
 )
 
 const (
@@ -26,15 +26,21 @@ const (
 	runnerBuildxCacheVolumeName   = "runner-buildx-cache"
 )
 
-func pullRunnerImage(ctx context.Context, client *dockerclient.Client, config *config.AutoscalerConfig) error {
+type DockerClientWithMetadata struct {
+	*dockerclient.Client
+	Name    string
+	Runtime string
+}
+
+func pullRunnerImage(ctx context.Context, client *DockerClientWithMetadata, params *ImageParams) error {
 	// Check if image already exists locally
-	_, localErr := client.ImageInspect(ctx, config.RunnerImage)
+	_, localErr := client.ImageInspect(ctx, params.RunnerImage)
 	imageExistsLocally := localErr == nil
 
 	authConfig := registry.AuthConfig{
-		Username:      config.RegistryUsername,
-		Password:      config.RegistryPassword,
-		ServerAddress: config.RegistryURL, // e.g., "ghcr.io" or your custom registry URL
+		Username:      params.RegistryUsername,
+		Password:      params.RegistryPassword,
+		ServerAddress: params.RegistryURL, // e.g., "ghcr.io" or your custom registry URL
 	}
 	encodedJSON, err := json.Marshal(authConfig)
 	if err != nil {
@@ -43,7 +49,7 @@ func pullRunnerImage(ctx context.Context, client *dockerclient.Client, config *c
 	authStr := base64.URLEncoding.EncodeToString(encodedJSON)
 
 	// Pull the runner image
-	pull, err := client.ImagePull(ctx, config.RunnerImage, image.PullOptions{
+	pull, err := client.ImagePull(ctx, params.RunnerImage, image.PullOptions{
 		RegistryAuth: authStr,
 	})
 	if err != nil {
@@ -53,7 +59,7 @@ func pullRunnerImage(ctx context.Context, client *dockerclient.Client, config *c
 			slog.Warn(
 				"failed to pull image, using local copy",
 				"dockerHost", client.DaemonHost(),
-				"image", config.RunnerImage,
+				"image", params.RunnerImage,
 				"error", err,
 			)
 			return nil
@@ -62,7 +68,7 @@ func pullRunnerImage(ctx context.Context, client *dockerclient.Client, config *c
 		// No local image either -> hard failure
 		return fmt.Errorf(
 			"image %q not available locally and pull failed: %w",
-			config.RunnerImage,
+			params.RunnerImage,
 			err,
 		)
 	}
@@ -78,11 +84,11 @@ func pullRunnerImage(ctx context.Context, client *dockerclient.Client, config *c
 	return nil
 }
 
-func createDockerClients(dockerHosts []string) ([]*dockerclient.Client, error) {
-	var clients []*dockerclient.Client
+func createDockerClients(dockerHosts []config.DockerHost) ([]*DockerClientWithMetadata, error) {
+	var clients []*DockerClientWithMetadata
 
-	for _, host := range dockerHosts {
-		host = strings.TrimSpace(host)
+	for _, dockerHost := range dockerHosts {
+		host := strings.TrimSpace(dockerHost.Url)
 		if host == "" {
 			continue
 		}
@@ -93,13 +99,17 @@ func createDockerClients(dockerHosts []string) ([]*dockerclient.Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create docker client for host %s: %w", host, err)
 		}
-		clients = append(clients, client)
+		clients = append(clients, &DockerClientWithMetadata{
+			Client:  client,
+			Name:    dockerHost.Name,
+			Runtime: dockerHost.Runtime,
+		})
 	}
 
 	return clients, nil
 }
 
-func createCacheVolumes(ctx context.Context, client *dockerclient.Client) error {
+func createCacheVolumes(ctx context.Context, client *DockerClientWithMetadata) error {
 	for _, volName := range []string{runnerNpmCacheVolumeName, runnerMavenCacheVolumeName, runnerAsdfDownloadsVolumeName, runnerBuildxCacheVolumeName} {
 		_, err := client.VolumeCreate(ctx, volume.CreateOptions{
 			Name: volName,
@@ -111,33 +121,35 @@ func createCacheVolumes(ctx context.Context, client *dockerclient.Client) error 
 	return nil
 }
 
-func (service *Service) startRunnerContainer(
+type startContainerParams struct {
+	containerName string
+	jitConfig     *scaleset.RunnerScaleSetJitRunnerConfig
+	imageParams   *ImageParams
+}
+
+func startRunnerContainer(
 	ctx context.Context,
-	dockerClient *dockerclient.Client,
-	containerName string,
-	jitConfig *scaleset.RunnerScaleSetJitRunnerConfig,
+	dockerClient *DockerClientWithMetadata,
+	startContainerParams *startContainerParams,
 ) (containerId string, err error) {
-
-	service.logger.Info("Starting runner container", slog.String("name", containerName), slog.String("dockerHost", dockerClient.DaemonHost()))
-
 	runnerContainer, err := dockerClient.ContainerCreate(
 		ctx,
 		&container.Config{
-			Image: service.config.RunnerImage,
+			Image: startContainerParams.imageParams.RunnerImage,
 			User:  "runner",
 			Cmd:   []string{"/home/runner/run.sh"},
 			Env: []string{
-				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", jitConfig.EncodedJITConfig),
-				fmt.Sprintf("DOCKER_REGISTRY_URL=%s", service.config.RegistryURL),
-				fmt.Sprintf("DOCKER_REGISTRY_USERNAME=%s", service.config.RegistryUsername),
-				fmt.Sprintf("DOCKER_REGISTRY_PASSWORD=%s", service.config.RegistryPassword),
-				fmt.Sprintf("ARTIFACTORY_TOKEN=%s", service.config.ArtifactoryToken),
+				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", startContainerParams.jitConfig.EncodedJITConfig),
+				fmt.Sprintf("DOCKER_REGISTRY_URL=%s", startContainerParams.imageParams.RegistryURL),
+				fmt.Sprintf("DOCKER_REGISTRY_USERNAME=%s", startContainerParams.imageParams.RegistryUsername),
+				fmt.Sprintf("DOCKER_REGISTRY_PASSWORD=%s", startContainerParams.imageParams.RegistryPassword),
+				fmt.Sprintf("ARTIFACTORY_TOKEN=%s", startContainerParams.imageParams.ArtifactoryToken),
 				"DOCKER_MIRROR_URL=http://registry-mirror:5000",
 				"START_DOCKER_SERVICE=true",
 			},
 		},
 		&container.HostConfig{
-			Runtime: service.config.DockerRuntime,
+			Runtime: dockerClient.Runtime,
 			ExtraHosts: []string{
 				"registry-mirror:host-gateway",
 			},
@@ -165,7 +177,7 @@ func (service *Service) startRunnerContainer(
 			},
 		},
 		nil, nil,
-		containerName,
+		startContainerParams.containerName,
 	)
 
 	if err != nil {

@@ -2,6 +2,11 @@ package scaler
 
 import "sync"
 
+type runnerInfo struct {
+	containerID  string
+	dockerClient *DockerClientWithMetadata
+}
+
 type runnerState struct {
 	mu   sync.Mutex
 	idle map[string]runnerInfo

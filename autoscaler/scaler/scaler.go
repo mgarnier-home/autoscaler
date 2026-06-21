@@ -6,73 +6,97 @@ import (
 	"log/slog"
 	"sync"
 
-	githubScaleset "github.com/actions/scaleset"
+	githubScaleSet "github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
 	"github.com/docker/docker/api/types/container"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/google/uuid"
-	"operis.fr/docker-autoscaler/config"
-	"operis.fr/docker-autoscaler/scaleset"
+	"mgarnier11.fr/docker-autoscaler/config"
 )
 
-type runnerInfo struct {
-	containerID  string
-	dockerClient *dockerclient.Client
-}
+type Scaler struct {
+	logger         *slog.Logger
+	scalesetClient *githubScaleSet.Client
+	config         *config.ScaleSetConfig
 
-type Service struct {
-	logger                *slog.Logger
-	config                *config.AutoscalerConfig
-	scalesetService       *scaleset.Service
-	runners               runnerState
-	dockerClients         []*dockerclient.Client
+	runnerScaleSet       *githubScaleSet.RunnerScaleSet
+	messageSessionClient *githubScaleSet.MessageSessionClient
+	listener             *listener.Listener
+
+	runners runnerState
+
 	nextDockerClientIndex int
 	dockerClientMutex     sync.Mutex
+	dockerClients         []*DockerClientWithMetadata
+	imageParams           *ImageParams
 }
 
-func New(ctx context.Context, scalesetService *scaleset.Service, config *config.AutoscalerConfig) (*Service, error) {
-	clients, err := createDockerClients(config.DockerHosts)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, client := range clients {
-		if err := pullRunnerImage(ctx, client, config); err != nil {
-			return nil, fmt.Errorf("failed to pull runner image: %w", err)
-		}
-
-		if err := createCacheVolumes(ctx, client); err != nil {
-			return nil, fmt.Errorf("failed to create cache volumes: %w", err)
-		}
-	}
-
-	return &Service{
-		logger:                config.Logger().WithGroup("scaler"),
-		dockerClients:         clients,
-		nextDockerClientIndex: 0,
-		config:                config,
-		scalesetService:       scalesetService,
-		runners: runnerState{
-			idle: make(map[string]runnerInfo),
-			busy: make(map[string]runnerInfo),
-		},
-	}, nil
+type ImageParams struct {
+	RegistryURL      string
+	RegistryUsername string
+	RegistryPassword string
+	RunnerImage      string
+	ArtifactoryToken string
 }
 
-func (service *Service) Close(ctx context.Context) {
-	service.logger.Info("Closing scaler service")
-	service.Shutdown(ctx)
+func (this *Scaler) Run(ctx context.Context) error {
+	this.logger.Info("Starting listener for runner scale set", slog.Int("scaleSetID", this.runnerScaleSet.ID))
 
-	for _, client := range service.dockerClients {
+	return this.listener.Run(ctx, this)
+}
+
+func (this *Scaler) Shutdown(ctx context.Context) {
+	// Shutdown all the runners
+	this.logger.Info("Shutting down runners")
+	this.runners.mu.Lock()
+	for name, info := range this.runners.idle {
+		this.logger.Info("Removing idle runner", slog.String("name", name), slog.String("containerID", info.containerID))
+		if err := info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true}); err != nil {
+			this.logger.Error("Failed to remove idle runner container", slog.String("name", name), slog.String("containerID", info.containerID), slog.String("error", err.Error()))
+		}
+	}
+	clear(this.runners.idle)
+
+	for name, info := range this.runners.busy {
+		this.logger.Info("Removing busy runner", slog.String("name", name), slog.String("containerID", info.containerID))
+		if err := info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true}); err != nil {
+			this.logger.Error("Failed to remove busy runner container", slog.String("name", name), slog.String("containerID", info.containerID), slog.String("error", err.Error()))
+		}
+	}
+	clear(this.runners.busy)
+	this.runners.mu.Unlock()
+
+	// Close the docker clients
+	for _, client := range this.dockerClients {
 		if err := client.Close(); err != nil {
-			service.logger.Error("Failed to close docker client", slog.String("dockerHost", client.DaemonHost()), slog.String("error", err.Error()))
+			this.logger.Error(
+				"Failed to close docker client",
+				slog.String("dockerHost", client.DaemonHost()),
+				slog.String("dockerHostName", client.Name),
+				slog.String("error", err.Error()),
+			)
 		}
+	}
+
+	// Close the message session client
+	this.messageSessionClient.Close(ctx)
+
+	// Delete the runner scale set
+	this.logger.Info(
+		"Deleting runner scale set",
+		slog.Int("scaleSetID", this.runnerScaleSet.ID),
+	)
+	if err := this.scalesetClient.DeleteRunnerScaleSet(context.WithoutCancel(ctx), this.runnerScaleSet.ID); err != nil {
+		this.logger.Error(
+			"Failed to delete runner scale set",
+			slog.Int("scaleSetID", this.runnerScaleSet.ID),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 
-func (service *Service) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
-	currentCount := service.runners.count()
-	targetRunnerCount := min(service.config.MaxRunners, service.config.MinRunners+count)
+func (this *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
+	currentCount := this.runners.count()
+	targetRunnerCount := min(this.config.MaxRunners, this.config.MinRunners+count)
 
 	switch {
 	case targetRunnerCount == currentCount:
@@ -81,7 +105,7 @@ func (service *Service) HandleDesiredRunnerCount(ctx context.Context, count int)
 	case targetRunnerCount > currentCount:
 		// Scale up
 		scaleUp := targetRunnerCount - currentCount
-		service.logger.Info(
+		this.logger.Info(
 			"Scaling up runners",
 			slog.Int("currentCount", currentCount),
 			slog.Int("desiredCount", targetRunnerCount),
@@ -89,13 +113,13 @@ func (service *Service) HandleDesiredRunnerCount(ctx context.Context, count int)
 		)
 
 		for range scaleUp {
-			if _, err := service.startRunner(ctx); err != nil {
-				service.logger.Error("Failed to start runner", slog.String("error", err.Error()))
+			if _, err := this.startRunner(ctx); err != nil {
+				this.logger.Error("Failed to start runner", slog.String("error", err.Error()))
 				return 0, nil
 			}
 		}
 
-		return service.runners.count(), nil
+		return this.runners.count(), nil
 	default:
 		// No need to handle scale down events, since:
 		// 1. JobCompleted events will first remove runners
@@ -103,25 +127,25 @@ func (service *Service) HandleDesiredRunnerCount(ctx context.Context, count int)
 		// 3. Removal after JobCompleted events is handled synchronously.
 		// 4. If the job is cancelled, the JobCompleted event will still be delivered.
 	}
-	return service.runners.count(), nil
+	return this.runners.count(), nil
 }
 
-func (service *Service) HandleJobStarted(ctx context.Context, jobInfo *githubScaleset.JobStarted) error {
-	service.logger.Info(
+func (this *Scaler) HandleJobStarted(ctx context.Context, jobInfo *githubScaleSet.JobStarted) error {
+	this.logger.Info(
 		"Job started",
 		slog.Int64("runnerRequestId", jobInfo.RunnerRequestID),
 		slog.String("jobId", jobInfo.JobID),
 	)
-	service.runners.markBusy(jobInfo.RunnerName)
+	this.runners.markBusy(jobInfo.RunnerName)
 	return nil
 }
 
-func (service *Service) HandleJobCompleted(ctx context.Context, jobInfo *githubScaleset.JobCompleted) error {
-	service.logger.Info("Job completed", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
+func (this *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *githubScaleSet.JobCompleted) error {
+	this.logger.Info("Job completed", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
 
-	info := service.runners.markDone(jobInfo.RunnerName)
+	info := this.runners.markDone(jobInfo.RunnerName)
 	if err := info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true}); err != nil {
-		service.logger.Error(
+		this.logger.Error(
 			"Failed to remove runner container",
 			slog.String("name", jobInfo.RunnerName),
 			slog.String("containerID", info.containerID),
@@ -132,32 +156,40 @@ func (service *Service) HandleJobCompleted(ctx context.Context, jobInfo *githubS
 	return nil
 }
 
-func (service *Service) startRunner(ctx context.Context) (string, error) {
+func (this *Scaler) startRunner(ctx context.Context) (string, error) {
 	containerName := fmt.Sprintf("runner-%s", uuid.NewString()[:8])
 
-	jit, err := service.scalesetService.GenerateJitRunnerConfig(ctx, containerName)
+	jit, err := this.GenerateJitRunnerConfig(ctx, containerName)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate JIT config: %w", err)
 	}
 
 	// Select the next Docker client in a round-robin fashion
-	service.dockerClientMutex.Lock()
-	client := service.dockerClients[service.nextDockerClientIndex]
-	service.logger.Info("Selected docker client", slog.String("dockerHost", client.DaemonHost()), slog.Int("clientIndex", service.nextDockerClientIndex))
-	service.nextDockerClientIndex = (service.nextDockerClientIndex + 1) % len(service.dockerClients)
-	service.dockerClientMutex.Unlock()
+	this.dockerClientMutex.Lock()
+	client := this.dockerClients[this.nextDockerClientIndex]
+	this.logger.Info(
+		"Selected docker client",
+		slog.String("dockerHost", client.DaemonHost()),
+		slog.String("dockerHostName", client.Name),
+		slog.Int("clientIndex", this.nextDockerClientIndex),
+	)
+	this.nextDockerClientIndex = (this.nextDockerClientIndex + 1) % len(this.dockerClients)
+	this.dockerClientMutex.Unlock()
 
-	containerID, err := service.startRunnerContainer(
+	containerID, err := startRunnerContainer(
 		ctx,
 		client,
-		containerName,
-		jit,
+		&startContainerParams{
+			containerName: containerName,
+			jitConfig:     jit,
+			imageParams:   this.imageParams,
+		},
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to start runner container: %w", err)
 	}
 
-	service.runners.addIdle(containerName, runnerInfo{
+	this.runners.addIdle(containerName, runnerInfo{
 		containerID:  containerID,
 		dockerClient: client,
 	})
@@ -165,26 +197,20 @@ func (service *Service) startRunner(ctx context.Context) (string, error) {
 	return containerName, nil
 }
 
-func (service *Service) Shutdown(ctx context.Context) {
-	service.logger.Info("Shutting down runners")
-	service.runners.mu.Lock()
-	defer service.runners.mu.Unlock()
-
-	for name, info := range service.runners.idle {
-		service.logger.Info("Removing idle runner", slog.String("name", name), slog.String("containerID", info.containerID))
-		if err := info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true}); err != nil {
-			service.logger.Error("Failed to remove idle runner container", slog.String("name", name), slog.String("containerID", info.containerID), slog.String("error", err.Error()))
-		}
+func (this *Scaler) GenerateJitRunnerConfig(ctx context.Context, containerName string) (*githubScaleSet.RunnerScaleSetJitRunnerConfig, error) {
+	// Generate JIT config for the runner
+	jit, err := this.scalesetClient.GenerateJitRunnerConfig(
+		ctx,
+		&githubScaleSet.RunnerScaleSetJitRunnerSetting{
+			Name: containerName,
+		},
+		this.runnerScaleSet.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate JIT config: %w", err)
 	}
-	clear(service.runners.idle)
 
-	for name, info := range service.runners.busy {
-		service.logger.Info("Removing busy runner", slog.String("name", name), slog.String("containerID", info.containerID))
-		if err := info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true}); err != nil {
-			service.logger.Error("Failed to remove busy runner container", slog.String("name", name), slog.String("containerID", info.containerID), slog.String("error", err.Error()))
-		}
-	}
-	clear(service.runners.busy)
+	return jit, nil
 }
 
-var _ listener.Scaler = (*Service)(nil)
+var _ listener.Scaler = (*Scaler)(nil)

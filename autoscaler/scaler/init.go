@@ -63,6 +63,10 @@ func New(ctx context.Context, logger *slog.Logger, scalesetClient *githubScaleSe
 		messageSessionClient: messageSessionClient,
 		dockerClients:        clients,
 		listener:             listener,
+		runners: runnerState{
+			idle: make(map[string]runnerInfo),
+			busy: make(map[string]runnerInfo),
+		},
 	}
 
 	return scaler, nil

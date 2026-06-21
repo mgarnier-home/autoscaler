@@ -6,7 +6,11 @@ on:
 
 jobs:
   test:
-    runs-on: test-1
+    strategy:
+      matrix:
+        runner: [test-1, test-2]
+        instance: [1, 2, 3]
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Test autoscaler
         run: |
@@ -35,8 +39,6 @@ jobs:
 
           java -version
           mvn --version
-
-          cat "$HOME/.m2/settings.xml"
 
           cat << EOF > "Dockerfile"
           FROM alpine:3.20

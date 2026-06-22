@@ -2,6 +2,21 @@
 
 set -euxo pipefail
 
+# Detect architecture and download the correct binary
+ARCH=$(dpkg --print-architecture)
+case "$ARCH" in
+    amd64)
+        DOCKER_ARCH="amd64"
+    ;;
+    arm64)
+        DOCKER_ARCH="arm64"
+    ;;
+    *)
+        echo "Unsupported architecture: $ARCH"
+        exit 1
+    ;;
+esac
+
 main() (
     install_prerequisites
     
@@ -100,7 +115,7 @@ install_docker() {
     RUNC_VERSION="1.1.15"
     echo "Replacing runc with v${RUNC_VERSION} for sysbox compatibility"
     RUNC_PATH=$(which runc)
-    wget -O "${RUNC_PATH}" "https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.amd64"
+    wget -O "${RUNC_PATH}" "https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${DOCKER_ARCH}"
     chmod +x "${RUNC_PATH}"
     
     # Verify
@@ -114,9 +129,9 @@ install_docker() {
 }
 
 configure_docker_credential_helpers() {
-    wget -O docker-credential-pass https://github.com/docker/docker-credential-helpers/releases/download/v0.9.4/docker-credential-pass-v0.9.4.linux-amd64
+    wget -O docker-credential-pass "https://github.com/docker/docker-credential-helpers/releases/download/v0.9.4/docker-credential-pass-v0.9.4.linux-${DOCKER_ARCH}"
     chmod +x docker-credential-pass
-    mv docker-credential-pass /usr/local/bin/
+    sudo mv docker-credential-pass /usr/local/bin/
 }
 
 install_gh_cli() {

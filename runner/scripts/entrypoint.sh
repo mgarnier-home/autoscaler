@@ -53,6 +53,9 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
     
     docker info
     
+    docker buildx create --use --name builder
+    docker buildx inspect --bootstrap builder
+    
     if [[ -z "${_DOCKER_REGISTRY_URL}" ]] || [[ -z "${_DOCKER_REGISTRY_USERNAME}" ]] || [[ -z "${_DOCKER_REGISTRY_PASSWORD}" ]]; then
         echo "DOCKER_REGISTRY_URL, DOCKER_REGISTRY_USERNAME or DOCKER_REGISTRY_PASSWORD is not set. Skipping docker login."
     else

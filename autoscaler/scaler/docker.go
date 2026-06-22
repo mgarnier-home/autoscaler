@@ -143,7 +143,7 @@ func startRunnerContainer(
 				fmt.Sprintf("DOCKER_REGISTRY_USERNAME=%s", startContainerParams.imageParams.RegistryUsername),
 				fmt.Sprintf("DOCKER_REGISTRY_PASSWORD=%s", startContainerParams.imageParams.RegistryPassword),
 				fmt.Sprintf("ARTIFACTORY_TOKEN=%s", startContainerParams.imageParams.ArtifactoryToken),
-				"DOCKER_MIRROR_URL=http://registry-mirror:5000",
+				fmt.Sprintf("DOCKER_MIRROR_URL=%s", startContainerParams.imageParams.RegistryMirrorURL),
 				"START_DOCKER_SERVICE=true",
 			},
 		},

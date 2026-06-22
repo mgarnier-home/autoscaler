@@ -7,3 +7,55 @@ on:
     paths-ignore:
       - ".github/**"
   workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: linux/${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform:
+          - amd64
+          - arm64
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v5
+
+      - name: Build autoscaler image
+        run: |
+          docker build \
+          --build-arg TARGETPLATFORM=${{ matrix.platform }} \
+          --tag mgarnier11/autoscaler:${{ matrix.platform }} \
+          autoscaler
+
+      - name: Push autoscaler image
+        run: |
+          docker push 'mgarnier11/autoscaler:${{ matrix.platform }}'
+
+      - name: Build runner image
+        run: |
+          docker build \
+          --build-arg TARGETPLATFORM=${{ matrix.platform }} \
+          --tag mgarnier11/runner:${{ matrix.platform }} \
+          runner
+
+      - name: Push runner image
+        run: |
+          docker push 'mgarnier11/runner:${{ matrix.platform }}'
+
+  publish:
+    runs-on: linux/amd64
+    needs: build
+    steps:
+      - name: Publish multi-arch images
+        run: |
+          docker buildx imagetools create \
+          --tag mgarnier11/autoscaler:latest \
+          --tag mgarnier11/autoscaler:${{ github.sha }} \
+          mgarnier11/autoscaler:amd64 \
+          mgarnier11/autoscaler:arm64
+
+          docker buildx imagetools create \
+          --tag mgarnier11/runner:latest \
+          --tag mgarnier11/runner:${{ github.sha }} \
+          mgarnier11/runner:amd64 \
+          mgarnier11/runner:arm64

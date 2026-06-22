@@ -31,11 +31,12 @@ type Scaler struct {
 }
 
 type ImageParams struct {
-	RegistryURL      string
-	RegistryUsername string
-	RegistryPassword string
-	RunnerImage      string
-	ArtifactoryToken string
+	RegistryURL       string
+	RegistryUsername  string
+	RegistryPassword  string
+	RegistryMirrorURL string
+	RunnerImage       string
+	ArtifactoryToken  string
 }
 
 func (this *Scaler) Run(ctx context.Context) error {

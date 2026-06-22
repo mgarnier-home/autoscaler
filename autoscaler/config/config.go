@@ -36,11 +36,12 @@ type AutoscalerConfig struct {
 	RegistrationURL string `key:"REGISTRATION_URL" required:"true"`
 	Token           string `key:"GITHUB_TOKEN" required:"true"`
 
-	RunnerImage      string `key:"RUNNER_IMAGE" required:"true"`
-	RegistryURL      string `key:"DOCKER_REGISTRY_URL" required:"true"`
-	RegistryUsername string `key:"DOCKER_REGISTRY_USERNAME" required:"true"`
-	RegistryPassword string `key:"DOCKER_REGISTRY_PASSWORD" required:"true"`
-	ArtifactoryToken string `key:"ARTIFACTORY_TOKEN" required:"true"`
+	RunnerImage       string `key:"RUNNER_IMAGE" required:"true"`
+	RegistryURL       string `key:"DOCKER_REGISTRY_URL" required:"true"`
+	RegistryUsername  string `key:"DOCKER_REGISTRY_USERNAME" required:"true"`
+	RegistryPassword  string `key:"DOCKER_REGISTRY_PASSWORD" required:"true"`
+	RegistryMirrorURL string `key:"DOCKER_REGISTRY_MIRROR_URL" default-value:""`
+	ArtifactoryToken  string `key:"ARTIFACTORY_TOKEN" required:"true"`
 
 	LogLevel  string `key:"LOG_LEVEL" default-value:"info"`
 	LogFormat string `key:"LOG_FORMAT" default-value:"text"`

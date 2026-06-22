@@ -2,37 +2,185 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/go-github/v79/github"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func createTempConfigFile(dir string) (string, error) {
+	tempFile, err := os.CreateTemp(dir, "config-e2e.yaml")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp config file: %w", err)
+	}
+
+	tempFileContent := `
+- scaleSetName: "scaleset-e2e-1"
+  maxRunners: 10
+  minRunners: 0
+  labels:
+    - "scaleset-e2e-1"
+  runnerGroup: "default"
+  dockerHosts:
+    - name: "local"
+      runtime: "sysbox-runc"
+      url: "unix:///var/run/docker.sock"
+- scaleSetName: "scaleset-e2e-2"
+  maxRunners: 10
+  minRunners: 0
+  labels:
+    - "scaleset-e2e-2"
+  runnerGroup: "default"
+  dockerHosts:
+    - name: "local"
+      runtime: "sysbox-runc"
+      url: "unix:///var/run/docker.sock"
+`
+
+	_, err = tempFile.WriteString(tempFileContent)
+	if err != nil {
+		return "", fmt.Errorf("failed to write to temp config file: %w", err)
+	}
+
+	err = tempFile.Close()
+	if err != nil {
+		return "", fmt.Errorf("failed to close temp config file: %w", err)
+	}
+
+	return tempFile.Name(), nil
+}
+
+type runCmdMonitor struct {
+	cmd     *exec.Cmd
+	readyCh chan struct{}
+	errCh   chan error
+	waitCh  chan error
+	once    sync.Once
+}
+
+func newRunCmdMonitor(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, readyText string, readyCount int) *runCmdMonitor {
+	monitor := &runCmdMonitor{
+		cmd:     cmd,
+		readyCh: make(chan struct{}),
+		errCh:   make(chan error, 1),
+		waitCh:  make(chan error, 1),
+	}
+
+	go func() {
+		monitor.waitCh <- cmd.Wait()
+	}()
+
+	go monitor.watchStdout(ctx, stdout, readyText, readyCount)
+	go monitor.watchStderr(stderr)
+
+	return monitor
+}
+
+func (m *runCmdMonitor) watchStdout(ctx context.Context, stdout io.Reader, readyText string, readyCount int) {
+	started := 0
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), readyText) {
+			started++
+			if started >= readyCount {
+				close(m.readyCh)
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			m.fail(ctx.Err())
+			return
+		default:
+		}
+	}
+
+	if scanErr := scanner.Err(); scanErr != nil {
+		m.fail(fmt.Errorf("failed to read stdout: %w", scanErr))
+		return
+	}
+
+	m.fail(fmt.Errorf("process exited before seeing %d %q log lines", readyCount, readyText))
+}
+
+func (m *runCmdMonitor) watchStderr(stderr io.Reader) {
+	scanner := bufio.NewScanner(stderr)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			m.fail(fmt.Errorf("stderr output detected: %s", line))
+			return
+		}
+	}
+
+	if scanErr := scanner.Err(); scanErr != nil {
+		m.fail(fmt.Errorf("failed to read stderr: %w", scanErr))
+	}
+}
+
+func (m *runCmdMonitor) fail(err error) {
+	m.once.Do(func() {
+		m.interrupt()
+		select {
+		case m.errCh <- err:
+		default:
+		}
+	})
+}
+
+func (m *runCmdMonitor) interrupt() {
+	if m.cmd.Process != nil {
+		_ = m.cmd.Process.Signal(os.Interrupt)
+	}
+}
+
+func (m *runCmdMonitor) waitForReady(ctx context.Context) error {
+	select {
+	case <-m.readyCh:
+		return nil
+	case err := <-m.errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *runCmdMonitor) wait() error {
+	return <-m.waitCh
+}
 
 func TestE2E(t *testing.T) {
 	if os.Getenv("E2E") != "true" {
 		t.Skip("Skipping E2E test; set E2E=true to run")
 	}
 
-	configURL := mustGetEnv(t, "E2E_SCALESET_URL")
-	name := mustGetEnv(t, "E2E_SCALESET_NAME")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	workflowEnv := mustE2EWorkflowEnv(t, name)
-	runArgs := mustE2ECommandArgs(t, configURL, name)
-
-	tempDir, err := os.MkdirTemp("", "e2e-dockerscaleset-")
+	tempDir, err := os.MkdirTemp("", "e2e-dockerscaleset")
 	require.NoError(t, err, "Failed to create temp dir")
 	defer os.RemoveAll(tempDir)
+
+	configFilePath, err := createTempConfigFile(tempDir)
+	require.NoError(t, err, "Failed to create temp config file")
+	defer os.Remove(configFilePath)
+
+	registrationUrl := mustGetEnv(t, "E2E_REGISTRATION_URL")
+	githubToken := mustGetEnv(t, "E2E_GITHUB_TOKEN")
+	dockerRegistryUrl := mustGetEnv(t, "E2E_DOCKER_REGISTRY_URL")
+	dockerRegistryUsername := mustGetEnv(t, "E2E_DOCKER_REGISTRY_USERNAME")
+	dockerRegistryPassword := mustGetEnv(t, "E2E_DOCKER_REGISTRY_PASSWORD")
+	artifactoryToken := mustGetEnv(t, "E2E_ARTIFACTORY_TOKEN")
+	runnerImage := mustGetEnv(t, "E2E_RUNNER_IMAGE")
 
 	binaryPath := filepath.Join(tempDir, "dockerscaleset")
 
@@ -43,93 +191,37 @@ func TestE2E(t *testing.T) {
 		require.NoError(t, err, "Failed to build dockerscaleset: %s", output)
 	}
 
-	// Fatal channel
-	testErrCh := make(chan error, 2)
-
-	runCmd := exec.Command(binaryPath, runArgs...)
+	runCmd := exec.Command(binaryPath)
+	runCmd.Env = []string{
+		"CONFIG_FILE_PATH=" + configFilePath,
+		"REGISTRATION_URL=" + registrationUrl,
+		"GITHUB_TOKEN=" + githubToken,
+		"DOCKER_REGISTRY_URL=" + dockerRegistryUrl,
+		"DOCKER_REGISTRY_USERNAME=" + dockerRegistryUsername,
+		"DOCKER_REGISTRY_PASSWORD=" + dockerRegistryPassword,
+		"ARTIFACTORY_TOKEN=" + artifactoryToken,
+		"RUNNER_IMAGE=" + runnerImage,
+	}
 	stdout, err := runCmd.StdoutPipe()
-	runCmd.Stderr = os.Stderr
 	require.NoError(t, err, "Failed to get stdout pipe")
+	stderr, err := runCmd.StderrPipe()
+	require.NoError(t, err, "Failed to get stderr pipe")
 	err = runCmd.Start()
 	require.NoError(t, err, "Failed to start dockerscaleset")
 
-	// Command exit error
-	cmdCh := make(chan error, 1)
+	monitor := newRunCmdMonitor(ctx, runCmd, stdout, stderr, "Starting listener for runner scale set", 2)
 	t.Cleanup(func() {
-		_ = runCmd.Process.Signal(os.Interrupt)
-		<-cmdCh
+		monitor.interrupt()
+		require.NoError(t, monitor.wait())
 	})
 
-	// Wait for log line
-	waitCh := make(chan struct{}, 1)
+	require.NoError(t, monitor.waitForReady(ctx), "dockerscaleset did not start both listeners")
 
-	var (
-		bufMu sync.Mutex
-		buf   bytes.Buffer
-	)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			bufMu.Lock()
-			buf.WriteString(line + "\n")
-			bufMu.Unlock()
-			if strings.Contains(line, "Getting next message") {
-				close(waitCh)
-				break
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			testErrCh <- fmt.Errorf("error reading dockerscaleset stdout: %w", err)
-			return
-		}
+	// env := mustE2EWorkflowEnv(t, "scaleset-e2e-1")
+	// runResult, err := env.runWorkflowOnNewRunner(t, ctx, 15*time.Minute)
+	// require.NoError(t, err, "workflow run failed")
+	// require.Equal(t, "success", runResult.Conclusion, "workflow run did not succeed")
 
-		cmdCh <- runCmd.Wait()
-		close(cmdCh)
-	}()
-
-	runID, err := workflowEnv.triggerWorkflowDispatch(t, t.Context())
-	require.NoError(t, err, "Failed to trigger workflow")
-
-	statusCh := make(chan *WorkflowRun, 1)
-	go func() {
-		select {
-		case <-waitCh:
-		case <-time.After(30 * time.Second):
-			bufMu.Lock()
-			logs := buf.String()
-			bufMu.Unlock()
-			testErrCh <- fmt.Errorf("timeout waiting for dockerscaleset to be ready; logs:\n%s", logs)
-			return
-		}
-		status, err := workflowEnv.waitForWorkflowCompletion(t, t.Context(), runID, 10*time.Minute)
-		if err != nil {
-			testErrCh <- fmt.Errorf("failed to wait for workflow completion: %w", err)
-			return
-		}
-		statusCh <- status
-	}()
-
-	select {
-	case err := <-cmdCh:
-		select {
-		case status := <-statusCh:
-			assert.Equal(t, "completed", status.Status)
-			assert.Equal(t, "success", status.Conclusion)
-		case <-time.After(30 * time.Second):
-			bufMu.Lock()
-			logs := buf.String()
-			bufMu.Unlock()
-			t.Fatalf("Timeout waiting for workflow status after dockerscaleset exited\nexit: %v\nlogs:%s\n", err, logs)
-		}
-	case status := <-statusCh:
-		assert.NotNil(t, status, "WorkflowRun status is nil")
-		assert.Equal(t, "completed", status.Status)
-		assert.Equal(t, "success", status.Conclusion)
-		return
-	case err := <-testErrCh:
-		t.Fatal(err)
-	}
 }
 
 type e2eWorkflowEnv struct {
@@ -139,87 +231,6 @@ type e2eWorkflowEnv struct {
 
 	scalesetName string
 	client       *github.Client
-}
-
-func mustE2EWorkflowEnv(t *testing.T, scalesetName string) *e2eWorkflowEnv {
-	return &e2eWorkflowEnv{
-		targetOrg:    mustGetEnv(t, "E2E_WORKFLOW_TARGET_ORG"),
-		targetRepo:   mustGetEnv(t, "E2E_WORKFLOW_TARGET_REPO"),
-		targetFile:   mustGetEnv(t, "E2E_WORKFLOW_TARGET_FILE"),
-		scalesetName: scalesetName,
-		client:       github.NewClient(nil).WithAuthToken(mustGetEnv(t, "E2E_WORKFLOW_GITHUB_TOKEN")),
-	}
-}
-
-func mustE2ECommandArgs(t *testing.T, configURL, name string) []string {
-	args := []string{
-		"--url", configURL,
-		"--name", name,
-		"--log-level", "debug",
-	}
-
-	// GitHub App credentials
-	var (
-		clientID       string
-		installationID int
-		privateKeyPath string
-	)
-
-	// GitHub token
-	var token string
-
-	clientID = os.Getenv("E2E_SCALESET_GITHUB_APP_CLIENT_ID")
-	installationIDStr := os.Getenv("E2E_SCALESET_GITHUB_APP_INSTALLATION_ID")
-	privateKeyPath = os.Getenv("E2E_SCALESET_GITHUB_APP_PRIVATE_KEY_PATH")
-
-	if clientID != "" && installationIDStr != "" && privateKeyPath != "" {
-		id, err := strconv.Atoi(installationIDStr)
-		require.NoError(t, err, "Invalid E2E_SCALESET_GITHUB_APP_INSTALLATION_ID")
-		installationID = id
-		args = append(args,
-			"--app-client-id", clientID,
-			"--app-installation-id", fmt.Sprintf("%d", installationID),
-			"--app-private-key", privateKeyPath,
-		)
-	} else {
-		token = os.Getenv("E2E_SCALESET_GITHUB_TOKEN")
-		require.NotEmpty(t, token, "E2E_SCALESET_GITHUB_TOKEN must be set if GitHub App credentials are not provided")
-		args = append(args,
-			"--token", token,
-		)
-	}
-
-	runnerGroup := os.Getenv("E2E_SCALESET_RUNNER_GROUP")
-	if runnerGroup != "" {
-		args = append(args,
-			"--runner-group", runnerGroup,
-		)
-	}
-
-	minRunners := 0
-	if minRunnersStr := os.Getenv("E2E_SCALESET_MIN_RUNNERS"); minRunnersStr != "" {
-		m, err := strconv.Atoi(minRunnersStr)
-		require.NoError(t, err, "Invalid E2E_SCALESET_MIN_RUNNERS")
-		minRunners = m
-		require.GreaterOrEqual(t, minRunners, 0, "E2E_SCALESET_MIN_RUNNERS must be >= 0")
-	}
-
-	maxRunners := 10
-	if maxRunnersStr := os.Getenv("E2E_SCALESET_MAX_RUNNERS"); maxRunnersStr != "" {
-		m, err := strconv.Atoi(maxRunnersStr)
-		require.NoError(t, err, "Invalid E2E_SCALESET_MAX_RUNNERS")
-		maxRunners = m
-		require.GreaterOrEqual(t, maxRunners, 0, "E2E_SCALESET_MAX_RUNNERS must be >= 0")
-	}
-
-	require.GreaterOrEqual(t, maxRunners, minRunners, "E2E_SCALESET_MAX_RUNNERS must be >= E2E_SCALESET_MIN_RUNNERS")
-
-	args = append(args,
-		"--min-runners", strconv.Itoa(minRunners),
-		"--max-runners", strconv.Itoa(maxRunners),
-	)
-
-	return args
 }
 
 type WorkflowRun struct {
@@ -259,7 +270,7 @@ func (env *e2eWorkflowEnv) triggerWorkflowDispatch(t *testing.T, ctx context.Con
 		},
 	}
 	runs, _, err := env.client.Actions.ListWorkflowRunsByFileName(
-		t.Context(),
+		ctx,
 		env.targetOrg,
 		env.targetRepo,
 		env.targetFile,

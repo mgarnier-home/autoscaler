@@ -1,23 +1,39 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestGetAutoscalerConfig_LoadsValues(t *testing.T) {
+	configFilePath := writeTempScaleSetsConfig(t, `
+- scaleSetName: my-scale-set
+  maxRunners: 12
+  minRunners: 2
+  labels:
+    - self-hosted
+    - linux
+    - x64
+  dockerHosts:
+    - name: athena
+      runtime: runc
+      url: tcp://1.1.1.1:2375
+    - name: atlas
+      runtime: sysbox-runc
+      url: tcp://2.2.2.2:2375
+`)
+
+	t.Setenv("CONFIG_FILE_PATH", configFilePath)
 	t.Setenv("REGISTRATION_URL", "https://github.com/org/repo")
-	t.Setenv("MAX_RUNNERS", "12")
-	t.Setenv("MIN_RUNNERS", "2")
-	t.Setenv("SCALE_SET_NAME", "my-scale-set")
-	t.Setenv("LABELS", "self-hosted,linux,x64")
 	t.Setenv("GITHUB_TOKEN", "token-value")
 	t.Setenv("RUNNER_IMAGE", "ghcr.io/actions/actions-runner:latest")
 	t.Setenv("DOCKER_REGISTRY_URL", "ghcr.io")
 	t.Setenv("DOCKER_REGISTRY_USERNAME", "runner-user")
 	t.Setenv("DOCKER_REGISTRY_PASSWORD", "runner-pass")
 	t.Setenv("ARTIFACTORY_TOKEN", "artifact-token")
-	t.Setenv("DOCKER_HOSTS_JSON", `[{"name":"athena","labels":["self-hosted","linux"],"runtime":"runc","url":"tcp://1.1.1.1:2375"},{"name":"atlas","labels":["self-hosted","docker"],"runtime":"sysbox-runc","url":"tcp://2.2.2.2:2375"}]`)
+
 	cfg, errs := GetAutoscalerConfig()
 	if len(errs) != 0 {
 		t.Fatalf("expected no errors, got %v", errs)
@@ -28,21 +44,6 @@ func TestGetAutoscalerConfig_LoadsValues(t *testing.T) {
 	}
 	if cfg.RegistrationURL != "https://github.com/org/repo" {
 		t.Fatalf("unexpected RegistrationURL: %q", cfg.RegistrationURL)
-	}
-	if cfg.MaxRunners != 12 {
-		t.Fatalf("unexpected MaxRunners: %d", cfg.MaxRunners)
-	}
-	if cfg.MinRunners != 2 {
-		t.Fatalf("unexpected MinRunners: %d", cfg.MinRunners)
-	}
-	if cfg.ScaleSetName != "my-scale-set" {
-		t.Fatalf("unexpected ScaleSetName: %q", cfg.ScaleSetName)
-	}
-	if len(cfg.Labels) != 3 || cfg.Labels[0] != "self-hosted" || cfg.Labels[1] != "linux" || cfg.Labels[2] != "x64" {
-		t.Fatalf("unexpected Labels: %#v", cfg.Labels)
-	}
-	if cfg.RunnerGroup != "default" {
-		t.Fatalf("expected default RunnerGroup, got %q", cfg.RunnerGroup)
 	}
 	if cfg.RunnerImage != "ghcr.io/actions/actions-runner:latest" {
 		t.Fatalf("unexpected RunnerImage: %q", cfg.RunnerImage)
@@ -59,33 +60,58 @@ func TestGetAutoscalerConfig_LoadsValues(t *testing.T) {
 	if cfg.ArtifactoryToken != "artifact-token" {
 		t.Fatalf("unexpected ArtifactoryToken: %q", cfg.ArtifactoryToken)
 	}
-	if len(cfg.DockerHosts) != 2 || cfg.DockerHosts[0].Url != "tcp://1.1.1.1:2375" || cfg.DockerHosts[1].Url != "tcp://2.2.2.2:2375" {
-		t.Fatalf("unexpected DockerHosts: %#v", cfg.DockerHosts)
+
+	if len(cfg.ScaleSetsConfigs) != 1 {
+		t.Fatalf("expected 1 scale set config, got %d", len(cfg.ScaleSetsConfigs))
 	}
-	if cfg.DockerHosts[0].Name != "athena" || cfg.DockerHosts[0].Runtime != "runc" {
-		t.Fatalf("unexpected first DockerHost metadata: %#v", cfg.DockerHosts[0])
+
+	scaleSet := cfg.ScaleSetsConfigs[0]
+	if scaleSet.ScaleSetName != "my-scale-set" {
+		t.Fatalf("unexpected ScaleSetName: %q", scaleSet.ScaleSetName)
 	}
-	if cfg.DockerHosts[1].Name != "atlas" || cfg.DockerHosts[1].Runtime != "sysbox-runc" {
-		t.Fatalf("unexpected DockerHosts: %#v", cfg.DockerHosts)
+	if scaleSet.MaxRunners != 12 {
+		t.Fatalf("unexpected MaxRunners: %d", scaleSet.MaxRunners)
+	}
+	if scaleSet.MinRunners != 2 {
+		t.Fatalf("unexpected MinRunners: %d", scaleSet.MinRunners)
+	}
+	if len(scaleSet.Labels) != 3 || scaleSet.Labels[0] != "self-hosted" || scaleSet.Labels[1] != "linux" || scaleSet.Labels[2] != "x64" {
+		t.Fatalf("unexpected Labels: %#v", scaleSet.Labels)
+	}
+	if len(scaleSet.DockerHosts) != 2 || scaleSet.DockerHosts[0].Url != "tcp://1.1.1.1:2375" || scaleSet.DockerHosts[1].Url != "tcp://2.2.2.2:2375" {
+		t.Fatalf("unexpected DockerHosts: %#v", scaleSet.DockerHosts)
+	}
+	if scaleSet.DockerHosts[0].Name != "athena" || scaleSet.DockerHosts[0].Runtime != "runc" {
+		t.Fatalf("unexpected first DockerHost metadata: %#v", scaleSet.DockerHosts[0])
+	}
+	if scaleSet.DockerHosts[1].Name != "atlas" || scaleSet.DockerHosts[1].Runtime != "sysbox-runc" {
+		t.Fatalf("unexpected second DockerHost metadata: %#v", scaleSet.DockerHosts[1])
 	}
 }
 
 func TestGetAutoscalerConfig_MissingRequiredFields(t *testing.T) {
-	t.Setenv("MAX_RUNNERS", "10")
-	t.Setenv("MIN_RUNNERS", "0")
+	configFilePath := writeTempScaleSetsConfig(t, `
+- scaleSetName: my-scale-set
+  maxRunners: 2
+  minRunners: 0
+  labels: [self-hosted]
+  dockerHosts:
+    - name: athena
+      runtime: runc
+      url: tcp://1.1.1.1:2375
+`)
+
+	t.Setenv("CONFIG_FILE_PATH", configFilePath)
 	t.Setenv("RUNNER_IMAGE", "ghcr.io/actions/actions-runner:latest")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("LOG_FORMAT", "json")
 
 	t.Setenv("REGISTRATION_URL", "")
-	t.Setenv("SCALE_SET_NAME", "")
-	t.Setenv("LABELS", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("DOCKER_REGISTRY_URL", "")
 	t.Setenv("DOCKER_REGISTRY_USERNAME", "")
 	t.Setenv("DOCKER_REGISTRY_PASSWORD", "")
 	t.Setenv("ARTIFACTORY_TOKEN", "")
-	t.Setenv("DOCKER_HOSTS_JSON", "")
 
 	cfg, errs := GetAutoscalerConfig()
 	if cfg == nil {
@@ -97,19 +123,16 @@ func TestGetAutoscalerConfig_MissingRequiredFields(t *testing.T) {
 
 	missingKeys := map[string]bool{
 		"REGISTRATION_URL":         false,
-		"SCALE_SET_NAME":           false,
-		"LABELS":                   false,
 		"GITHUB_TOKEN":             false,
 		"DOCKER_REGISTRY_URL":      false,
 		"DOCKER_REGISTRY_USERNAME": false,
 		"DOCKER_REGISTRY_PASSWORD": false,
 		"ARTIFACTORY_TOKEN":        false,
-		"DOCKER_HOSTS_JSON":        false,
 	}
 
 	for _, err := range errs {
 		for key := range missingKeys {
-			if err != nil && contains(err.Error(), key) {
+			if err != nil && strings.Contains(err.Error(), key) {
 				missingKeys[key] = true
 			}
 		}
@@ -123,98 +146,157 @@ func TestGetAutoscalerConfig_MissingRequiredFields(t *testing.T) {
 }
 
 func TestGetAutoscalerConfig_InvalidIntAddsError(t *testing.T) {
+	configFilePath := writeTempScaleSetsConfig(t, `
+- scaleSetName: my-scale-set
+  maxRunners: 2
+  minRunners: 0
+  labels: [self-hosted]
+  dockerHosts:
+    - name: athena
+      runtime: runc
+      url: tcp://1.1.1.1:2375
+`)
+
+	t.Setenv("CONFIG_FILE_PATH", configFilePath)
 	t.Setenv("REGISTRATION_URL", "https://github.com/org/repo")
-	t.Setenv("MAX_RUNNERS", "not-an-int")
-	t.Setenv("MIN_RUNNERS", "0")
-	t.Setenv("SCALE_SET_NAME", "my-scale-set")
-	t.Setenv("LABELS", "self-hosted")
 	t.Setenv("GITHUB_TOKEN", "token-value")
 	t.Setenv("RUNNER_IMAGE", "ghcr.io/actions/actions-runner:latest")
 	t.Setenv("DOCKER_REGISTRY_URL", "ghcr.io")
-	t.Setenv("DOCKER_REGISTRY_USERNAME", "runner-user")
+	t.Setenv("DOCKER_REGISTRY_USERNAME", "")
 	t.Setenv("DOCKER_REGISTRY_PASSWORD", "runner-pass")
 	t.Setenv("ARTIFACTORY_TOKEN", "artifact-token")
-	t.Setenv("DOCKER_HOSTS_JSON", `[{"name":"athena","labels":["self-hosted"],"runtime":"runc","url":"tcp://1.1.1.1:2375"}]`)
 
 	_, errs := GetAutoscalerConfig()
 	if len(errs) == 0 {
-		t.Fatalf("expected error for invalid MAX_RUNNERS")
+		t.Fatalf("expected validation error for missing DOCKER_REGISTRY_USERNAME")
 	}
 }
 
-func TestDecodeDockerHostsJSON(t *testing.T) {
-	t.Run("valid JSON decodes hosts", func(t *testing.T) {
-		raw := `[{"name":"athena","labels":["self-hosted","linux"],"runtime":"runc","url":"tcp://1.1.1.1:2375"}]`
+func TestDecodeScaleSetsConfigs(t *testing.T) {
+	t.Run("valid YAML decodes scale sets", func(t *testing.T) {
+		configFilePath := writeTempScaleSetsConfig(t, `
+- scaleSetName: my-scale-set
+  maxRunners: 10
+  minRunners: 2
+  labels:
+    - self-hosted
+    - linux
+  dockerHosts:
+    - name: athena
+      runtime: runc
+      url: tcp://1.1.1.1:2375
+`)
 
-		hosts, err := DecodeDockerHostsJSON(raw)
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
+		scaleSets, errs := DecodeScaleSetsConfigs(configFilePath)
+		if len(errs) != 0 {
+			t.Fatalf("expected no errors, got %v", errs)
 		}
 
-		if len(hosts) != 1 {
-			t.Fatalf("expected 1 host, got %d", len(hosts))
+		if len(scaleSets) != 1 {
+			t.Fatalf("expected 1 scale set, got %d", len(scaleSets))
 		}
 
-		host := hosts[0]
-		if host.Name != "athena" {
-			t.Fatalf("unexpected host name: %q", host.Name)
+		if scaleSets[0].ScaleSetName != "my-scale-set" {
+			t.Fatalf("unexpected scaleSetName: %q", scaleSets[0].ScaleSetName)
 		}
-		if host.Runtime != "runc" {
-			t.Fatalf("unexpected runtime: %q", host.Runtime)
-		}
-		if host.Url != "tcp://1.1.1.1:2375" {
-			t.Fatalf("unexpected url: %q", host.Url)
-		}
-		if len(host.Labels) != 2 || host.Labels[0] != "self-hosted" || host.Labels[1] != "linux" {
-			t.Fatalf("unexpected labels: %#v", host.Labels)
+		if len(scaleSets[0].DockerHosts) != 1 || scaleSets[0].DockerHosts[0].Name != "athena" {
+			t.Fatalf("unexpected dockerHosts: %#v", scaleSets[0].DockerHosts)
 		}
 	})
 
 	testCases := []struct {
 		name      string
-		raw       string
+		yaml      string
 		errSubstr string
 	}{
 		{
-			name:      "empty host name is rejected",
-			raw:       `[{"name":"","labels":["self-hosted"],"runtime":"runc","url":"tcp://1.1.1.1:2375"}]`,
-			errSubstr: "name cannot be empty",
+			name: "empty host name is rejected",
+			yaml: `
+- scaleSetName: my-scale-set
+  maxRunners: 1
+  minRunners: 0
+  labels: [self-hosted]
+  dockerHosts:
+    - name: ""
+      runtime: runc
+      url: tcp://1.1.1.1:2375
+`,
+			errSubstr: "'name' cannot be empty",
 		},
 		{
-			name:      "invalid url is rejected",
-			raw:       `[{"name":"athena","labels":["self-hosted"],"runtime":"runc","url":"not-a-url"}]`,
-			errSubstr: "Invalid Docker host URL",
+			name: "invalid url is rejected",
+			yaml: `
+- scaleSetName: my-scale-set
+  maxRunners: 1
+  minRunners: 0
+  labels: [self-hosted]
+  dockerHosts:
+    - name: athena
+      runtime: runc
+      url: not-a-url
+`,
+			errSubstr: "invalid 'url'",
 		},
 		{
-			name:      "unsupported runtime is rejected",
-			raw:       `[{"name":"athena","labels":["self-hosted"],"runtime":"kata","url":"tcp://1.1.1.1:2375"}]`,
-			errSubstr: "Unsupported Docker host runtime",
+			name: "unsupported runtime is rejected",
+			yaml: `
+- scaleSetName: my-scale-set
+  maxRunners: 1
+  minRunners: 0
+  labels: [self-hosted]
+  dockerHosts:
+    - name: athena
+      runtime: kata
+      url: tcp://1.1.1.1:2375
+`,
+			errSubstr: "unsupported 'runtime'",
+		},
+		{
+			name: "max lower than min is rejected",
+			yaml: `
+- scaleSetName: my-scale-set
+  maxRunners: 0
+  minRunners: 1
+  labels: [self-hosted]
+  dockerHosts:
+    - name: athena
+      runtime: runc
+      url: tcp://1.1.1.1:2375
+`,
+			errSubstr: "cannot be less than 'minRunners'",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := DecodeDockerHostsJSON(tc.raw)
-			if err == nil {
-				t.Fatalf("expected error, got nil")
+			configFilePath := writeTempScaleSetsConfig(t, tc.yaml)
+			_, errs := DecodeScaleSetsConfigs(configFilePath)
+			if len(errs) == 0 {
+				t.Fatalf("expected errors, got none")
 			}
 
-			if !strings.Contains(err.Error(), tc.errSubstr) {
-				t.Fatalf("expected error containing %q, got %q", tc.errSubstr, err.Error())
+			found := false
+			for _, err := range errs {
+				if strings.Contains(err.Error(), tc.errSubstr) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				t.Fatalf("expected one error containing %q, got %v", tc.errSubstr, errs)
 			}
 		})
 	}
 }
 
-func contains(value, substr string) bool {
-	return len(value) >= len(substr) && (value == substr || len(substr) == 0 || indexOf(value, substr) >= 0)
-}
+func writeTempScaleSetsConfig(t *testing.T, content string) string {
+	t.Helper()
 
-func indexOf(value, substr string) int {
-	for i := 0; i+len(substr) <= len(value); i++ {
-		if value[i:i+len(substr)] == substr {
-			return i
-		}
+	filePath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(filePath, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
 	}
-	return -1
+
+	return filePath
 }

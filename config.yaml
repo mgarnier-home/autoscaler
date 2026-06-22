@@ -1,6 +1,6 @@
 - scaleSetName: "test-1"
   maxRunners: 10
-  minRunner: 0
+  minRunners: 0
   labels:
     - "test-1"
   runnerGroup: "default"
@@ -10,7 +10,7 @@
       url: "unix:///var/run/docker.sock"
 - scaleSetName: "test-2"
   maxRunners: 10
-  minRunner: 0
+  minRunners: 0
   labels:
     - "test-2"
   runnerGroup: "default"

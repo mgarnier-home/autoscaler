@@ -20,10 +20,9 @@ import (
 )
 
 const (
-	runnerNpmCacheVolumeName      = "runner-npm-cache"
-	runnerMavenCacheVolumeName    = "runner-maven-cache"
-	runnerAsdfDownloadsVolumeName = "runner-asdf-downloads"
-	runnerBuildxCacheVolumeName   = "runner-buildx-cache"
+	runnerNpmCacheVolumeName    = "runner-npm-cache"
+	runnerMavenCacheVolumeName  = "runner-maven-cache"
+	runnerBuildxCacheVolumeName = "runner-buildx-cache"
 )
 
 type DockerClientWithMetadata struct {
@@ -110,7 +109,7 @@ func createDockerClients(dockerHosts []config.DockerHost) ([]*DockerClientWithMe
 }
 
 func createCacheVolumes(ctx context.Context, client *DockerClientWithMetadata) error {
-	for _, volName := range []string{runnerNpmCacheVolumeName, runnerMavenCacheVolumeName, runnerAsdfDownloadsVolumeName, runnerBuildxCacheVolumeName} {
+	for _, volName := range []string{runnerNpmCacheVolumeName, runnerMavenCacheVolumeName, runnerBuildxCacheVolumeName} {
 		_, err := client.VolumeCreate(ctx, volume.CreateOptions{
 			Name: volName,
 		})
@@ -163,11 +162,6 @@ func startRunnerContainer(
 					Type:   mount.TypeVolume,
 					Source: runnerMavenCacheVolumeName,
 					Target: "/home/runner/.m2/repository",
-				},
-				{
-					Type:   mount.TypeVolume,
-					Source: runnerAsdfDownloadsVolumeName,
-					Target: "/asdf/downloads",
 				},
 				{
 					Type:   mount.TypeVolume,

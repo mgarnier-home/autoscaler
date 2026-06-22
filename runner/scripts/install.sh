@@ -44,10 +44,9 @@ configure_docker() {
     mkdir -p /etc/apt/keyrings
     curl -fsSL "https://download.docker.com/linux/$ID/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     
-    local version DPKG_ARCH
+    local version
     version=$(echo "$VERSION_CODENAME" | sed 's/trixie\|n\/a/bookworm/g')
-    DPKG_ARCH="$(dpkg --print-architecture)"
-    echo "deb [arch=${DPKG_ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$ID ${version} stable" \
+    echo "deb [arch=${DOCKER_ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$ID ${version} stable" \
     | tee /etc/apt/sources.list.d/docker.list > /dev/null
 }
 
@@ -58,7 +57,7 @@ configure_gh_cli() {
     && cat "$out" | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
     && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
     && mkdir -p -m 755 /etc/apt/sources.list.d \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+    && echo "deb [arch=${DOCKER_ARCH} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 }
 
 install_prerequisites() {
@@ -131,7 +130,7 @@ install_docker() {
 configure_docker_credential_helpers() {
     wget -O docker-credential-pass "https://github.com/docker/docker-credential-helpers/releases/download/v0.9.4/docker-credential-pass-v0.9.4.linux-${DOCKER_ARCH}"
     chmod +x docker-credential-pass
-    sudo mv docker-credential-pass /usr/local/bin/
+    mv docker-credential-pass /usr/local/bin/
 }
 
 install_gh_cli() {

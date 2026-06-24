@@ -25,27 +25,33 @@ sudo chown -R runner:runner \
 if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
     echo "Starting docker service"
     
-    # Configure dockerd startup arguments in /etc/default/docker
+    sudo test -f /etc/docker/daemon.json || echo '{}' | sudo tee /etc/docker/daemon.json >/dev/null
+    
+    tmpfile=$(mktemp)
+    
     if [[ -n "${_DOCKER_MIRROR_URL}" ]]; then
-        echo "Configuring registry mirror in /etc/docker/daemon.json"
-        
-        # Remove the protocol scheme (http:// or https://) for insecure-registries
+        # Add the mirror URL to the Docker daemon configuration
         mirror_host="${_DOCKER_MIRROR_URL#http://}"
         mirror_host="${mirror_host#https://}"
         mirror_host="${mirror_host%%/*}"
         
-        # use jq to create the JSON file
-        sudo mkdir -p /etc/docker
-        
-        jq -n --arg url "${_DOCKER_MIRROR_URL}" --arg host "${mirror_host}" '{
-            "registry-mirrors": [$url],
-            "insecure-registries": [$host],
-            "features": {
-                "containerd-snapshotter": true
-            }
-        }' | sudo tee /etc/docker/daemon.json > /dev/null
-        
+        jq \
+        --arg url "${_DOCKER_MIRROR_URL}" \
+        --arg host "${mirror_host}" \
+        '
+            .features["containerd-snapshotter"] = true
+            | .["registry-mirrors"] = [$url]
+            | .["insecure-registries"] = [$host]
+        ' \
+        /etc/docker/daemon.json > "${tmpfile}"
+    else
+        # If no mirror URL is provided, just enable the containerd snapshotter feature
+        jq \
+        '.features["containerd-snapshotter"] = true' \
+        /etc/docker/daemon.json > "${tmpfile}"
     fi
+    
+    sudo mv "${tmpfile}" /etc/docker/daemon.json
     
     sudo service docker start
     

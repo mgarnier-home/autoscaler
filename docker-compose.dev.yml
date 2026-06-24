@@ -9,12 +9,19 @@ services:
     environment:
       REGISTRATION_URL: "${REGISTRATION_URL}"
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
-      RUNNER_IMAGE: "${RUNNER_IMAGE}"
+      RUNNER_IMAGE: "runner"
       DOCKER_REGISTRY_URL: "${DOCKER_REGISTRY_URL}"
       DOCKER_REGISTRY_USERNAME: "${DOCKER_REGISTRY_USERNAME}"
       DOCKER_REGISTRY_PASSWORD: "${DOCKER_REGISTRY_PASSWORD}"
       ARTIFACTORY_TOKEN: "${ARTIFACTORY_TOKEN}"
       CONFIG_FILE_PATH: "/app/config.yaml"
+      SCALE_SET_NAME: "${SCALE_SET_NAME}"
+      MAX_RUNNERS: "10"
+      MIN_RUNNERS: "0"
+      LABELS: "${LABELS}"
+      RUNNER_GROUP: "${RUNNER_GROUP}"
+      DOCKER_HOSTS: "${DOCKER_HOSTS}"
+      RUNTIME: "${RUNTIME}"
 
   registry-mirror:
     container_name: registry-mirror

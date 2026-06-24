@@ -16,7 +16,6 @@ import (
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
-	"mgarnier11.fr/docker-autoscaler/config"
 )
 
 const (
@@ -27,11 +26,17 @@ const (
 
 type DockerClientWithMetadata struct {
 	*dockerclient.Client
-	Name    string
 	Runtime string
 }
 
-func pullRunnerImage(ctx context.Context, client *DockerClientWithMetadata, params *ImageParams) error {
+type pullImageParams struct {
+	RegistryURL      string
+	RegistryUsername string
+	RegistryPassword string
+	RunnerImage      string
+}
+
+func pullRunnerImage(ctx context.Context, client *DockerClientWithMetadata, params *pullImageParams) error {
 	// Check if image already exists locally
 	_, localErr := client.ImageInspect(ctx, params.RunnerImage)
 	imageExistsLocally := localErr == nil
@@ -83,11 +88,11 @@ func pullRunnerImage(ctx context.Context, client *DockerClientWithMetadata, para
 	return nil
 }
 
-func createDockerClients(dockerHosts []config.DockerHost) ([]*DockerClientWithMetadata, error) {
+func createDockerClients(dockerHosts []string, runtime string) ([]*DockerClientWithMetadata, error) {
 	var clients []*DockerClientWithMetadata
 
 	for _, dockerHost := range dockerHosts {
-		host := strings.TrimSpace(dockerHost.Url)
+		host := strings.TrimSpace(dockerHost)
 		if host == "" {
 			continue
 		}
@@ -100,8 +105,7 @@ func createDockerClients(dockerHosts []config.DockerHost) ([]*DockerClientWithMe
 		}
 		clients = append(clients, &DockerClientWithMetadata{
 			Client:  client,
-			Name:    dockerHost.Name,
-			Runtime: dockerHost.Runtime,
+			Runtime: runtime,
 		})
 	}
 
@@ -121,9 +125,14 @@ func createCacheVolumes(ctx context.Context, client *DockerClientWithMetadata) e
 }
 
 type startContainerParams struct {
-	containerName string
-	jitConfig     *scaleset.RunnerScaleSetJitRunnerConfig
-	imageParams   *ImageParams
+	containerName     string
+	jitConfig         *scaleset.RunnerScaleSetJitRunnerConfig
+	registryURL       string
+	registryUsername  string
+	registryPassword  string
+	runnerImage       string
+	artifactoryToken  string
+	registryMirrorURL string
 }
 
 func startRunnerContainer(
@@ -134,16 +143,16 @@ func startRunnerContainer(
 	runnerContainer, err := dockerClient.ContainerCreate(
 		ctx,
 		&container.Config{
-			Image: startContainerParams.imageParams.RunnerImage,
+			Image: startContainerParams.runnerImage,
 			User:  "runner",
 			Cmd:   []string{"/home/runner/run.sh"},
 			Env: []string{
 				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", startContainerParams.jitConfig.EncodedJITConfig),
-				fmt.Sprintf("DOCKER_REGISTRY_URL=%s", startContainerParams.imageParams.RegistryURL),
-				fmt.Sprintf("DOCKER_REGISTRY_USERNAME=%s", startContainerParams.imageParams.RegistryUsername),
-				fmt.Sprintf("DOCKER_REGISTRY_PASSWORD=%s", startContainerParams.imageParams.RegistryPassword),
-				fmt.Sprintf("ARTIFACTORY_TOKEN=%s", startContainerParams.imageParams.ArtifactoryToken),
-				fmt.Sprintf("DOCKER_MIRROR_URL=%s", startContainerParams.imageParams.RegistryMirrorURL),
+				fmt.Sprintf("DOCKER_REGISTRY_URL=%s", startContainerParams.registryURL),
+				fmt.Sprintf("DOCKER_REGISTRY_USERNAME=%s", startContainerParams.registryUsername),
+				fmt.Sprintf("DOCKER_REGISTRY_PASSWORD=%s", startContainerParams.registryPassword),
+				fmt.Sprintf("ARTIFACTORY_TOKEN=%s", startContainerParams.artifactoryToken),
+				fmt.Sprintf("DOCKER_MIRROR_URL=%s", startContainerParams.registryMirrorURL),
 				"START_DOCKER_SERVICE=true",
 			},
 		},

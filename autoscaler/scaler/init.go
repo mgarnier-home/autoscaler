@@ -13,7 +13,7 @@ import (
 	"mgarnier11.fr/docker-autoscaler/config"
 )
 
-func New(ctx context.Context, logger *slog.Logger, scalesetClient *githubScaleSet.Client, config *config.ScaleSetConfig, imageParams *ImageParams) (*Scaler, error) {
+func New(ctx context.Context, logger *slog.Logger, scalesetClient *githubScaleSet.Client, config *config.AutoscalerConfig) (*Scaler, error) {
 	logger = logger.WithGroup("scaler").With("scaleSetName", config.ScaleSetName)
 
 	runnerScaleSet, err := createRunnerScaleSet(context.Background(), config, scalesetClient, logger)
@@ -26,20 +26,27 @@ func New(ctx context.Context, logger *slog.Logger, scalesetClient *githubScaleSe
 		return nil, fmt.Errorf("failed to create message session client: %w", err)
 	}
 
-	clients, err := createDockerClients(config.DockerHosts)
+	clients, err := createDockerClients(config.DockerHosts, config.Runtime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker clients: %w", err)
 	}
 
 	for _, client := range clients {
+		logger.Info("Pulling runner image", "dockerHost", client.DaemonHost())
 		if err := pullRunnerImage(
 			ctx,
 			client,
-			imageParams,
+			&pullImageParams{
+				RegistryURL:      config.RegistryURL,
+				RegistryUsername: config.RegistryUsername,
+				RegistryPassword: config.RegistryPassword,
+				RunnerImage:      config.RunnerImage,
+			},
 		); err != nil {
 			return nil, fmt.Errorf("failed to pull runner image: %w", err)
 		}
 
+		logger.Info("Creating cache volumes", "dockerHost", client.DaemonHost())
 		if err := createCacheVolumes(ctx, client); err != nil {
 			return nil, fmt.Errorf("failed to create cache volumes: %w", err)
 		}
@@ -58,7 +65,6 @@ func New(ctx context.Context, logger *slog.Logger, scalesetClient *githubScaleSe
 		logger:               logger,
 		scalesetClient:       scalesetClient,
 		config:               config,
-		imageParams:          imageParams,
 		runnerScaleSet:       runnerScaleSet,
 		messageSessionClient: messageSessionClient,
 		dockerClients:        clients,
@@ -72,7 +78,7 @@ func New(ctx context.Context, logger *slog.Logger, scalesetClient *githubScaleSe
 	return scaler, nil
 }
 
-func createRunnerScaleSet(ctx context.Context, config *config.ScaleSetConfig, scalesetClient *githubScaleSet.Client, logger *slog.Logger) (*githubScaleSet.RunnerScaleSet, error) {
+func createRunnerScaleSet(ctx context.Context, config *config.AutoscalerConfig, scalesetClient *githubScaleSet.Client, logger *slog.Logger) (*githubScaleSet.RunnerScaleSet, error) {
 	// Get the runner group ID of the chosen runner group
 	var runnerGroupID int
 	if config.RunnerGroup == "default" {

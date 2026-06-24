@@ -16,7 +16,7 @@ import (
 type Scaler struct {
 	logger         *slog.Logger
 	scalesetClient *githubScaleSet.Client
-	config         *config.ScaleSetConfig
+	config         *config.AutoscalerConfig
 
 	runnerScaleSet       *githubScaleSet.RunnerScaleSet
 	messageSessionClient *githubScaleSet.MessageSessionClient
@@ -27,7 +27,6 @@ type Scaler struct {
 	nextDockerClientIndex int
 	dockerClientMutex     sync.Mutex
 	dockerClients         []*DockerClientWithMetadata
-	imageParams           *ImageParams
 }
 
 type ImageParams struct {
@@ -72,7 +71,6 @@ func (this *Scaler) Shutdown(ctx context.Context) {
 			this.logger.Error(
 				"Failed to close docker client",
 				slog.String("dockerHost", client.DaemonHost()),
-				slog.String("dockerHostName", client.Name),
 				slog.String("error", err.Error()),
 			)
 		}
@@ -137,15 +135,33 @@ func (this *Scaler) HandleJobStarted(ctx context.Context, jobInfo *githubScaleSe
 		slog.Int64("runnerRequestId", jobInfo.RunnerRequestID),
 		slog.String("jobId", jobInfo.JobID),
 	)
-	this.runners.markBusy(jobInfo.RunnerName)
+
+	err := this.runners.markBusy(jobInfo.RunnerName)
+	if err != nil {
+		this.logger.Error(
+			"Failed to mark runner busy",
+			slog.String("name", jobInfo.RunnerName),
+			slog.String("error", err.Error()),
+		)
+	}
+
 	return nil
 }
 
 func (this *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *githubScaleSet.JobCompleted) error {
 	this.logger.Info("Job completed", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
 
-	info := this.runners.markDone(jobInfo.RunnerName)
-	if err := info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true}); err != nil {
+	info, err := this.runners.markDone(jobInfo.RunnerName)
+	if err != nil {
+		this.logger.Error(
+			"Failed to mark runner done",
+			slog.String("name", jobInfo.RunnerName),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	err = info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true})
+	if err != nil {
 		this.logger.Error(
 			"Failed to remove runner container",
 			slog.String("name", jobInfo.RunnerName),
@@ -171,7 +187,6 @@ func (this *Scaler) startRunner(ctx context.Context) (string, error) {
 	this.logger.Info(
 		"Selected docker client",
 		slog.String("dockerHost", client.DaemonHost()),
-		slog.String("dockerHostName", client.Name),
 		slog.Int("clientIndex", this.nextDockerClientIndex),
 	)
 	this.nextDockerClientIndex = (this.nextDockerClientIndex + 1) % len(this.dockerClients)
@@ -181,9 +196,14 @@ func (this *Scaler) startRunner(ctx context.Context) (string, error) {
 		ctx,
 		client,
 		&startContainerParams{
-			containerName: containerName,
-			jitConfig:     jit,
-			imageParams:   this.imageParams,
+			containerName:     containerName,
+			jitConfig:         jit,
+			registryURL:       this.config.RegistryURL,
+			registryUsername:  this.config.RegistryUsername,
+			registryPassword:  this.config.RegistryPassword,
+			runnerImage:       this.config.RunnerImage,
+			artifactoryToken:  this.config.ArtifactoryToken,
+			registryMirrorURL: this.config.RegistryMirrorURL,
 		},
 	)
 	if err != nil {

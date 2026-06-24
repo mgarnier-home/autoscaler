@@ -1,6 +1,9 @@
 package scaler
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 type runnerInfo struct {
 	containerID  string
@@ -20,35 +23,36 @@ func (runnerState *runnerState) count() int {
 	return count
 }
 
-func (runnerState *runnerState) markBusy(name string) {
+func (runnerState *runnerState) markBusy(name string) error {
 	runnerState.mu.Lock()
 	defer runnerState.mu.Unlock()
 	state, ok := runnerState.idle[name]
 	if !ok {
-		panic("marking non-existent runner busy")
+		return fmt.Errorf("marking non-existent runner busy: %s", name)
 	}
 	delete(runnerState.idle, name)
 	runnerState.busy[name] = state
+	return nil
 }
 
-func (runnerState *runnerState) markDone(name string) runnerInfo {
+func (runnerState *runnerState) markDone(name string) (runnerInfo, error) {
 	runnerState.mu.Lock()
 	defer runnerState.mu.Unlock()
 	return runnerState.markDoneUnlocked(name)
 }
 
-func (runnerState *runnerState) markDoneUnlocked(name string) runnerInfo {
+func (runnerState *runnerState) markDoneUnlocked(name string) (runnerInfo, error) {
 	info, ok := runnerState.busy[name]
 	if ok {
 		delete(runnerState.busy, name)
-		return info
+		return info, nil
 	}
 	info, ok = runnerState.idle[name]
 	if ok {
 		delete(runnerState.idle, name)
-		return info
+		return info, nil
 	}
-	panic("marking non-existent runner done")
+	return runnerInfo{}, fmt.Errorf("runner %s not found in busy or idle state", name)
 }
 
 func (runnerState *runnerState) addIdle(name string, info runnerInfo) {

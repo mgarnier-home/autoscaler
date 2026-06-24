@@ -131,7 +131,6 @@ type startContainerParams struct {
 	registryUsername  string
 	registryPassword  string
 	runnerImage       string
-	artifactoryToken  string
 	registryMirrorURL string
 }
 
@@ -151,7 +150,6 @@ func startRunnerContainer(
 				fmt.Sprintf("DOCKER_REGISTRY_URL=%s", startContainerParams.registryURL),
 				fmt.Sprintf("DOCKER_REGISTRY_USERNAME=%s", startContainerParams.registryUsername),
 				fmt.Sprintf("DOCKER_REGISTRY_PASSWORD=%s", startContainerParams.registryPassword),
-				fmt.Sprintf("ARTIFACTORY_TOKEN=%s", startContainerParams.artifactoryToken),
 				fmt.Sprintf("DOCKER_MIRROR_URL=%s", startContainerParams.registryMirrorURL),
 				"START_DOCKER_SERVICE=true",
 			},

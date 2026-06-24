@@ -15,8 +15,6 @@ func TestGetAutoscalerConfig_LoadsValues(t *testing.T) {
 	t.Setenv("DOCKER_REGISTRY_USERNAME", "runner-user")
 	t.Setenv("DOCKER_REGISTRY_PASSWORD", "runner-pass")
 
-	t.Setenv("ARTIFACTORY_TOKEN", "artifact-token")
-
 	t.Setenv("MAX_RUNNERS", "12")
 	t.Setenv("MIN_RUNNERS", "2")
 
@@ -59,10 +57,6 @@ func TestGetAutoscalerConfig_LoadsValues(t *testing.T) {
 
 	if cfg.RegistryPassword != "runner-pass" {
 		t.Fatalf("unexpected RegistryPassword: %q", cfg.RegistryPassword)
-	}
-
-	if cfg.ArtifactoryToken != "artifact-token" {
-		t.Fatalf("unexpected ArtifactoryToken: %q", cfg.ArtifactoryToken)
 	}
 
 	if cfg.MaxRunners != 12 {
@@ -122,8 +116,6 @@ func TestGetAutoscalerConfig_DefaultValues(t *testing.T) {
 	t.Setenv("DOCKER_REGISTRY_USERNAME", "user")
 	t.Setenv("DOCKER_REGISTRY_PASSWORD", "pass")
 
-	t.Setenv("ARTIFACTORY_TOKEN", "artifact-token")
-
 	t.Setenv("SCALE_SET_NAME", "my-scale-set")
 	t.Setenv("LABELS", "self-hosted")
 	t.Setenv("DOCKER_HOSTS", "tcp://1.1.1.1:2375")
@@ -170,7 +162,6 @@ func TestGetAutoscalerConfig_MissingRequiredFields(t *testing.T) {
 	t.Setenv("DOCKER_REGISTRY_URL", "")
 	t.Setenv("DOCKER_REGISTRY_USERNAME", "")
 	t.Setenv("DOCKER_REGISTRY_PASSWORD", "")
-	t.Setenv("ARTIFACTORY_TOKEN", "")
 	t.Setenv("SCALE_SET_NAME", "")
 	t.Setenv("LABELS", "")
 	t.Setenv("DOCKER_HOSTS", "")
@@ -192,7 +183,6 @@ func TestGetAutoscalerConfig_MissingRequiredFields(t *testing.T) {
 		"DOCKER_REGISTRY_URL":      false,
 		"DOCKER_REGISTRY_USERNAME": false,
 		"DOCKER_REGISTRY_PASSWORD": false,
-		"ARTIFACTORY_TOKEN":        false,
 		"SCALE_SET_NAME":           false,
 		"LABELS":                   false,
 		"DOCKER_HOSTS":             false,
@@ -222,8 +212,6 @@ func TestGetAutoscalerConfig_InvalidInteger(t *testing.T) {
 	t.Setenv("DOCKER_REGISTRY_URL", "ghcr.io")
 	t.Setenv("DOCKER_REGISTRY_USERNAME", "user")
 	t.Setenv("DOCKER_REGISTRY_PASSWORD", "pass")
-
-	t.Setenv("ARTIFACTORY_TOKEN", "artifact-token")
 
 	t.Setenv("SCALE_SET_NAME", "my-scale-set")
 	t.Setenv("LABELS", "self-hosted")

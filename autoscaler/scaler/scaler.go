@@ -35,7 +35,6 @@ type ImageParams struct {
 	RegistryPassword  string
 	RegistryMirrorURL string
 	RunnerImage       string
-	ArtifactoryToken  string
 }
 
 func (this *Scaler) Run(ctx context.Context) error {
@@ -202,7 +201,6 @@ func (this *Scaler) startRunner(ctx context.Context) (string, error) {
 			registryUsername:  this.config.RegistryUsername,
 			registryPassword:  this.config.RegistryPassword,
 			runnerImage:       this.config.RunnerImage,
-			artifactoryToken:  this.config.ArtifactoryToken,
 			registryMirrorURL: this.config.RegistryMirrorURL,
 		},
 	)

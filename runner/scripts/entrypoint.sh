@@ -106,3 +106,10 @@ unset_config_vars() {
 unset_config_vars
 
 "$@"
+
+echo "Copy new buildx cache to the old one"
+if [[ -d /buildx-cache-new ]]; then
+    sudo cp -r /buildx-cache-new/* /buildx-cache/
+fi
+
+echo "Runner script completed successfully."

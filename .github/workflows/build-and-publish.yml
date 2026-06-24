@@ -22,7 +22,9 @@ jobs:
 
       - name: Build autoscaler image
         run: |
-          docker build \
+          docker buildx build \
+          --cache-from=type=local,src=/buildx-cache \
+          --cache-to=type=local,dest=/buildx-cache-new,mode=max \
           --build-arg TARGETPLATFORM=${{ matrix.platform }} \
           --tag mgarnier11/autoscaler:${{ matrix.platform }} \
           autoscaler
@@ -33,7 +35,9 @@ jobs:
 
       - name: Build runner image
         run: |
-          docker build \
+          docker buildx build \
+          --cache-from=type=local,src=/buildx-cache \
+          --cache-to=type=local,dest=/buildx-cache-new,mode=max \
           --build-arg TARGETPLATFORM=${{ matrix.platform }} \
           --tag mgarnier11/runner:${{ matrix.platform }} \
           runner

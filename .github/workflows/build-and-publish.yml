@@ -22,10 +22,12 @@ jobs:
 
       - name: Build autoscaler image
         run: |
-          docker build \
-          --build-arg TARGETPLATFORM=${{ matrix.platform }} \
-          --tag mgarnier11/autoscaler:${{ matrix.platform }} \
-          autoscaler
+          docker buildx build \
+            --build-arg TARGETPLATFORM=${{ matrix.platform }} \
+            --tag mgarnier11/autoscaler:${{ matrix.platform }} \
+            --cache-from=type=local,src=/buildx-cache \
+            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
+            autoscaler
 
       - name: Push autoscaler image
         run: |
@@ -33,10 +35,12 @@ jobs:
 
       - name: Build runner image
         run: |
-          docker build \
-          --build-arg TARGETPLATFORM=${{ matrix.platform }} \
-          --tag mgarnier11/runner:${{ matrix.platform }} \
-          runner
+          docker buildx build \
+            --build-arg TARGETPLATFORM=${{ matrix.platform }} \
+            --tag mgarnier11/runner:${{ matrix.platform }} \
+            --cache-from=type=local,src=/buildx-cache \
+            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
+            runner
 
       - name: Push runner image
         run: |

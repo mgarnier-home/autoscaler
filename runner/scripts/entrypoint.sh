@@ -12,11 +12,13 @@ _DOCKER_REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD:-""}
 # Ensure buildx, ASDF, NPM, and Maven cache directories exist with correct permissions when mounted as volumes
 sudo mkdir -p \
 /buildx-cache \
+/buildx-cache-new \
 /home/runner/.npm \
 /home/runner/.m2/repository \
 /asdf/downloads
 sudo chown -R runner:runner \
 /buildx-cache \
+/buildx-cache-new \
 /home/runner/.npm \
 /home/runner/.m2/repository \
 /asdf/downloads

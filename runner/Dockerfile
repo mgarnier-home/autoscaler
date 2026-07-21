@@ -1,6 +1,6 @@
 # Define base images as build arguments (allow customization in CI/CD pipelines)
 ARG GO_BUILD_VERSION="docker.io/golang:bookworm"
-ARG ACTIONS_IMAGE="ghcr.io/actions/actions-runner:2.335.1"
+ARG ACTIONS_IMAGE="ghcr.io/actions/actions-runner:2.336.0"
 
 # ---- Build Stage ----
 FROM ${GO_BUILD_VERSION} AS builder
@@ -41,6 +41,7 @@ RUN printf 'Installation plugins asdf\n' \
   && asdf plugin add 'maven' \
   && asdf plugin add 'php' \
   && asdf plugin add 'yq' \
+  && asdf plugin add 'golang' \
   && asdf plugin add 'terraform' 'https://github.com/asdf-community/asdf-hashicorp.git' \
   && printf 'Installation de yq' \
   && asdf install 'yq' '4.53.2'

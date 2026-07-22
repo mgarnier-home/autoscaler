@@ -48,6 +48,8 @@ configure_docker() {
     version=$(echo "$VERSION_CODENAME" | sed 's/trixie\|n\/a/bookworm/g')
     echo "deb [arch=${DOCKER_ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$ID ${version} stable" \
     | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+
 }
 
 configure_gh_cli() {

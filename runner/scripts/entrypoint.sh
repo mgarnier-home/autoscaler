@@ -11,13 +11,9 @@ _DOCKER_REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD:-""}
 # Start docker service if needed (e.g. for docker-in-docker)
 # Ensure buildx, ASDF, NPM, and Maven cache directories exist with correct permissions when mounted as volumes
 sudo mkdir -p \
-/buildx-cache \
-/buildx-cache-new \
 /home/runner/.npm \
 /asdf/downloads
 sudo chown -R runner:runner \
-/buildx-cache \
-/buildx-cache-new \
 /home/runner/.npm \
 /asdf/downloads
 
@@ -52,11 +48,6 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
     fi
     
     sudo mv "${tmpfile}" /etc/docker/daemon.json
-    cat > buildkitd.toml <<'EOF'
-[registry."registry-mirror:5000"]
-  http = true
-  insecure = true
-EOF
     
     sudo service docker start
     
@@ -66,7 +57,10 @@ EOF
 
 
     
-    docker buildx create --use --name builder --config buildkitd.toml
+    docker buildx create \
+        --name builder \
+        --driver docker-container \
+        --use
     docker buildx inspect --bootstrap builder
     
     if [[ -z "${_DOCKER_REGISTRY_URL}" ]] || [[ -z "${_DOCKER_REGISTRY_USERNAME}" ]] || [[ -z "${_DOCKER_REGISTRY_PASSWORD}" ]]; then
@@ -120,9 +114,7 @@ unset_config_vars
 
 "$@"
 
-echo "Copy new buildx cache to the old one"
-if [[ -d /buildx-cache-new ]]; then
-    sudo cp -r /buildx-cache-new/* /buildx-cache/
-fi
-
 echo "Runner script completed successfully."
+
+
+ls -la /usr/local/bin/

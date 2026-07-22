@@ -64,4 +64,6 @@ jobs:
 
           docker build \
             --progress=plain \
+            --cache-from=type=registry,ref=registry.mgarnier11.fr/test-autoscaler:buildcache \
+            --cache-to=type=registry,ref=registry.mgarnier11.fr/test-autoscaler:buildcache,mode=max \
             -t test-buildx-cache .

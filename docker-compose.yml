@@ -12,7 +12,7 @@ services:
       DOCKER_REGISTRY_URL: "${DOCKER_REGISTRY_URL}"
       DOCKER_REGISTRY_USERNAME: "${DOCKER_REGISTRY_USERNAME}"
       DOCKER_REGISTRY_PASSWORD: "${DOCKER_REGISTRY_PASSWORD}"
-      DOCKER_REGISTRY_MIRROR_URL: "http://registry-mirror:5000"
+      DOCKER_REGISTRY_MIRROR_URL: "https://registry-proxy.mgarnier11.fr"
 
       SCALE_SET_NAME: "local-runner"
       MAX_RUNNERS: "10"

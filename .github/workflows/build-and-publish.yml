@@ -26,8 +26,8 @@ jobs:
           docker buildx build \
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/autoscaler:${{ matrix.platform }} \
-            --cache-from=type=local,src=/buildx-cache \
-            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
+            --cache-from=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache \
+            --cache-to=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache,mode=max \
             autoscaler
 
       - name: Push autoscaler image
@@ -49,8 +49,8 @@ jobs:
           docker buildx build \
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/runner:${{ matrix.platform }} \
-            --cache-from=type=local,src=/buildx-cache \
-            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
+            --cache-from=type=registry,ref=registry.mgarnier11.fr/runner:buildcache \
+            --cache-to=type=registry,ref=registry.mgarnier11.fr/runner:buildcache,mode=max \
             runner
 
       - name: Push runner image

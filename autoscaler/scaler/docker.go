@@ -20,7 +20,6 @@ import (
 
 const (
 	runnerNpmCacheVolumeName    = "runner-npm-cache"
-	runnerMavenCacheVolumeName  = "runner-maven-cache"
 	runnerBuildxCacheVolumeName = "runner-buildx-cache"
 )
 
@@ -113,7 +112,7 @@ func createDockerClients(dockerHosts []string, runtime string) ([]*DockerClientW
 }
 
 func createCacheVolumes(ctx context.Context, client *DockerClientWithMetadata) error {
-	for _, volName := range []string{runnerNpmCacheVolumeName, runnerMavenCacheVolumeName, runnerBuildxCacheVolumeName} {
+	for _, volName := range []string{runnerNpmCacheVolumeName, runnerBuildxCacheVolumeName} {
 		_, err := client.VolumeCreate(ctx, volume.CreateOptions{
 			Name: volName,
 		})
@@ -164,11 +163,6 @@ func startRunnerContainer(
 					Type:   mount.TypeVolume,
 					Source: runnerNpmCacheVolumeName,
 					Target: "/home/runner/.npm",
-				},
-				{
-					Type:   mount.TypeVolume,
-					Source: runnerMavenCacheVolumeName,
-					Target: "/home/runner/.m2/repository",
 				},
 				{
 					Type:   mount.TypeVolume,

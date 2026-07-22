@@ -2,11 +2,15 @@ FROM docker.io/golang:1.26.4-alpine AS builder
 
 WORKDIR /build
 
-COPY . .
+# Download Go module dependencies (caches them if go.mod and go.sum are not changed)
+COPY go.mod go.sum ./
+RUN go mod download
 
+# Build the Go app
+COPY . .
 RUN go build -o /build/docker-autoscaler .
 
-FROM alpine:3.18
+FROM scratch AS runtime
 
 WORKDIR /app
 

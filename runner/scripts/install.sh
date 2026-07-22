@@ -26,7 +26,6 @@ main() (
     apt-get update
     update-ca-certificates
     
-    install_az_cli
     install_gh_cli
     install_docker
     
@@ -137,17 +136,8 @@ install_gh_cli() {
     apt install -y gh
 }
 
-install_az_cli() {
-    script_path=/tmp/az_install.sh
-    curl \
-    --fail \
-    --silent \
-    --show-error \
-    --location \
-    'https://azurecliprod.blob.core.windows.net/$root/deb_install.sh' \
-    --output "${script_path}"
-    bash "${script_path}" -y
-    rm "${script_path}"
+install_task() {
+    sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
 }
 
 setup_sudoers() {

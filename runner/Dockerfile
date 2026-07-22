@@ -36,15 +36,8 @@ RUN printf 'Installation plugins asdf\n' \
   && sudo mkdir ${ASDF_DATA_DIR} \
   && sudo chown -R runner:runner ${ASDF_DATA_DIR} \
   && asdf plugin add 'nodejs' \
-  && asdf plugin add 'deno' \
-  && asdf plugin add 'java' \
-  && asdf plugin add 'maven' \
-  && asdf plugin add 'php' \
-  && asdf plugin add 'yq' \
   && asdf plugin add 'golang' \
-  && asdf plugin add 'terraform' 'https://github.com/asdf-community/asdf-hashicorp.git' \
-  && printf 'Installation de yq' \
-  && asdf install 'yq' '4.53.2'
+  && asdf plugin add 'terraform' 'https://github.com/asdf-community/asdf-hashicorp.git'
 
 COPY --chown=runner:runner ./scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+dotenv:
+  - .env
+
+tasks:
+  download:
+    dir: ./
+    cmds:
+      - go mod download
+  build:
+    dir: ./autoscaler
+    cmds:
+      - go build -o ./dist/autoscaler
+  build-runner:
+    dir: ./runner
+    cmds:
+      - docker build --tag runner .
+  start:
+    dir: ./autoscaler
+    env:
+      RUNNER_IMAGE: "runner"
+      SCALE_SET_NAME: "local-runner"
+      LABELS: "linux/amd64,test-1,test-2"
+      DOCKER_HOSTS: "unix:///var/run/docker.sock"
+      RUNTIME: "sysbox-runc"
+    cmds:
+      - task: build
+      - task: build-runner
+      - ./dist/autoscaler
+  # build-all:
+  #   dir: ./
+  #   vars:
+  #     VERSION: '{{default "v0.0.0" .VERSION}}'
+  #     COMMIT: '{{default "commitsha" .COMMIT}}'
+  #     DATE: '{{default "undefined" .DATE}}'
+  #     BUILD_FLAGS: >-
+  #       -ldflags="
+  #         -X 'github.com/mgarnier-home/utils/buildinfo.Version={{.VERSION}}'
+  #         -X 'github.com/mgarnier-home/utils/buildinfo.Commit={{.COMMIT}}'
+  #         -X 'github.com/mgarnier-home/utils/buildinfo.Date={{.DATE}}'
+  #       "
+  #   cmds:
+  #     - GOOS=windows GOARCH=amd64 go build {{.BUILD_FLAGS}} -o ./bin/orchestrator-windows-amd64
+  #     - GOOS=windows GOARCH=arm64 go build {{.BUILD_FLAGS}} -o ./bin/orchestrator-windows-arm64
+  #     - GOOS=linux GOARCH=amd64 go build {{.BUILD_FLAGS}} -o ./bin/orchestrator-linux-amd64
+  #     - GOOS=linux GOARCH=arm64 go build {{.BUILD_FLAGS}} -o ./bin/orchestrator-linux-arm64

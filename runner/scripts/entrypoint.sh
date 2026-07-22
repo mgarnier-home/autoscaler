@@ -14,13 +14,11 @@ sudo mkdir -p \
 /buildx-cache \
 /buildx-cache-new \
 /home/runner/.npm \
-/home/runner/.m2/repository \
 /asdf/downloads
 sudo chown -R runner:runner \
 /buildx-cache \
 /buildx-cache-new \
 /home/runner/.npm \
-/home/runner/.m2/repository \
 /asdf/downloads
 
 

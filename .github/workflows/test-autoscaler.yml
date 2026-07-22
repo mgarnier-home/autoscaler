@@ -15,6 +15,7 @@ jobs:
       - name: Test autoscaler
         run: |
           whoami
+          task --version
           asdf --version
           asdf plugin list
           asdf list
@@ -31,14 +32,6 @@ jobs:
           asdf set -u nodejs 20.5.1
           node --version
           npm --version
-
-          asdf install maven 3.9.9
-          asdf set -u maven 3.9.9
-          asdf install java adoptopenjdk-21.0.7+6.0.LTS
-          asdf set -u java adoptopenjdk-21.0.7+6.0.LTS
-
-          java -version
-          mvn --version
 
           cat << EOF > "Dockerfile"
           FROM alpine:3.20

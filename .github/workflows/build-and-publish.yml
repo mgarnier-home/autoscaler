@@ -26,7 +26,7 @@ jobs:
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/autoscaler:${{ matrix.platform }} \
             --cache-from=type=local,src=/buildx-cache \
-            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
+            --cache-to=type=local,dest=/buildx-cache,mode=max \
             autoscaler
 
       - name: Push autoscaler image
@@ -39,7 +39,7 @@ jobs:
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/runner:${{ matrix.platform }} \
             --cache-from=type=local,src=/buildx-cache \
-            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
+            --cache-to=type=local,dest=/buildx-cache,mode=max \
             runner
 
       - name: Push runner image

@@ -25,6 +25,7 @@ tasks:
       LABELS: "linux/amd64,test-1,test-2"
       DOCKER_HOSTS: "unix:///var/run/docker.sock"
       RUNTIME: "sysbox-runc"
+      DOCKER_REGISTRY_MIRROR_URL: "http://localhost:5000"
     cmds:
       - task: build
       - task: build-runner

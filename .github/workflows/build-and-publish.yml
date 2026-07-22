@@ -26,8 +26,8 @@ jobs:
           docker buildx build \
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/autoscaler:${{ matrix.platform }} \
-            --cache-from=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache \
-            --cache-to=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache,mode=max \
+            --cache-from=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache-${{ matrix.platform }} \
+            --cache-to=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache-${{ matrix.platform }},mode=max \
             --push \
             autoscaler
 
@@ -47,8 +47,8 @@ jobs:
           docker buildx build \
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/runner:${{ matrix.platform }} \
-            --cache-from=type=registry,ref=registry.mgarnier11.fr/runner:buildcache \
-            --cache-to=type=registry,ref=registry.mgarnier11.fr/runner:buildcache,mode=max \
+            --cache-from=type=registry,ref=registry.mgarnier11.fr/runner:buildcache-${{ matrix.platform }} \
+            --cache-to=type=registry,ref=registry.mgarnier11.fr/runner:buildcache-${{ matrix.platform }},mode=max \
             --push \
             runner
 

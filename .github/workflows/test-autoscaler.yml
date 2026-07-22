@@ -64,6 +64,6 @@ jobs:
 
           docker buildx build \
             --progress=plain \
-            --cache-from=type=registry,ref=localhost:5000/autoscaler:buildcache \
-            --cache-to=type=registry,ref=localhost:5000/autoscaler:buildcache,mode=max \
+            --cache-from=type=registry,ref=registry-mirror:5000/autoscaler:buildcache \
+            --cache-to=type=registry,ref=registry-mirror:5000/autoscaler:buildcache,mode=max \
             -t test-buildx-cache .

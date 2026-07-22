@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 RUN go build -o /build/docker-autoscaler .
 
-FROM scratch AS runtime
+FROM alpine AS runtime
 
 WORKDIR /app
 

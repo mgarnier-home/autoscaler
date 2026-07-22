@@ -28,6 +28,7 @@ jobs:
             --tag mgarnier11/autoscaler:${{ matrix.platform }} \
             --cache-from=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache \
             --cache-to=type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache,mode=max \
+            --load \
             autoscaler
 
       - name: Push autoscaler image
@@ -51,6 +52,7 @@ jobs:
             --tag mgarnier11/runner:${{ matrix.platform }} \
             --cache-from=type=registry,ref=registry.mgarnier11.fr/runner:buildcache \
             --cache-to=type=registry,ref=registry.mgarnier11.fr/runner:buildcache,mode=max \
+            --load \
             runner
 
       - name: Push runner image

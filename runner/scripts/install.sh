@@ -28,6 +28,7 @@ main() (
     
     install_gh_cli
     install_docker
+    install_task
     
     setup_sudoers
     create_user_runner

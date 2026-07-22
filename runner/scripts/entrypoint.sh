@@ -52,14 +52,21 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
     fi
     
     sudo mv "${tmpfile}" /etc/docker/daemon.json
+    cat > buildkitd.toml <<'EOF'
+[registry."registry-mirror:5000"]
+  http = true
+  insecure = true
+EOF
     
     sudo service docker start
     
     cat /etc/docker/daemon.json
     
     docker info
+
+
     
-    docker buildx create --use --name builder
+    docker buildx create --use --name builder --config buildkitd.toml
     docker buildx inspect --bootstrap builder
     
     if [[ -z "${_DOCKER_REGISTRY_URL}" ]] || [[ -z "${_DOCKER_REGISTRY_USERNAME}" ]] || [[ -z "${_DOCKER_REGISTRY_PASSWORD}" ]]; then

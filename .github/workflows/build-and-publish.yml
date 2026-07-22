@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-autoscaler:
     runs-on: linux/${{ matrix.platform }}
     strategy:
       matrix:
@@ -26,12 +26,22 @@ jobs:
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/autoscaler:${{ matrix.platform }} \
             --cache-from=type=local,src=/buildx-cache \
-            --cache-to=type=local,dest=/buildx-cache,mode=max \
+            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
             autoscaler
 
       - name: Push autoscaler image
         run: |
           docker push 'mgarnier11/autoscaler:${{ matrix.platform }}'
+  build-runner:
+    runs-on: linux/${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform:
+          - amd64
+          - arm64
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v5
 
       - name: Build runner image
         run: |
@@ -39,16 +49,15 @@ jobs:
             --build-arg TARGETPLATFORM=${{ matrix.platform }} \
             --tag mgarnier11/runner:${{ matrix.platform }} \
             --cache-from=type=local,src=/buildx-cache \
-            --cache-to=type=local,dest=/buildx-cache,mode=max \
+            --cache-to=type=local,dest=/buildx-cache-new,mode=max \
             runner
 
       - name: Push runner image
         run: |
           docker push 'mgarnier11/runner:${{ matrix.platform }}'
-
   publish:
     runs-on: linux/amd64
-    needs: build
+    needs: [build-autoscaler, build-runner]
     steps:
       - name: Publish multi-arch images
         run: |

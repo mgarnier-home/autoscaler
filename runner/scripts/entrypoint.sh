@@ -54,13 +54,16 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
     cat /etc/docker/daemon.json
     
     docker info
-
-
+    
+    if [[ -f /opt/buildkit-image.tar ]]; then
+        echo "Preloading buildx builder image from /opt/buildkit-image.tar"
+        docker load -i /opt/buildkit-image.tar
+    fi
     
     docker buildx create \
-        --name builder \
-        --driver docker-container \
-        --use
+    --name builder \
+    --driver docker-container \
+    --use
     docker buildx inspect --bootstrap builder
     
     if [[ -z "${_DOCKER_REGISTRY_URL}" ]] || [[ -z "${_DOCKER_REGISTRY_USERNAME}" ]] || [[ -z "${_DOCKER_REGISTRY_PASSWORD}" ]]; then
@@ -116,5 +119,3 @@ unset_config_vars
 
 echo "Runner script completed successfully."
 
-
-ls -la /usr/local/bin/

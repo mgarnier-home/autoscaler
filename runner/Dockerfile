@@ -1,6 +1,21 @@
 # Define base images as build arguments (allow customization in CI/CD pipelines)
 ARG GO_BUILD_VERSION="docker.io/golang:bookworm"
 ARG ACTIONS_IMAGE="ghcr.io/actions/actions-runner:2.336.0"
+ARG BUILDKIT_IMAGE="moby/buildkit:buildx-stable-1"
+
+# ---- Buildkit image stage ----
+# Pre-fetches the buildx driver image so it doesn't need to be pulled by the
+# ephemeral in-container docker daemon on every runner container startup.
+FROM quay.io/skopeo/stable:latest AS buildkit-image
+ARG BUILDKIT_IMAGE
+ARG TARGETARCH
+ARG TARGETVARIANT
+RUN skopeo copy \
+  --override-os linux \
+  --override-arch "${TARGETARCH}" \
+  ${TARGETVARIANT:+--override-variant "${TARGETVARIANT}"} \
+  "docker://${BUILDKIT_IMAGE}" \
+  "docker-archive:/buildkit-image.tar:${BUILDKIT_IMAGE}"
 
 # ---- Build Stage ----
 FROM ${GO_BUILD_VERSION} AS builder
@@ -30,6 +45,9 @@ ENV PATH="${PATH}:/asdf/shims:/asdf/bin"
 
 # Copy the ASDF binary from the builder stage
 COPY --from=builder /go/bin/asdf /usr/local/bin/asdf
+
+# Copy the pre-fetched buildkit image so entrypoint.sh can load it instead of pulling it
+COPY --from=buildkit-image /buildkit-image.tar /opt/buildkit-image.tar
 
 # Install asdf plugins
 RUN printf 'Installation plugins asdf\n' \

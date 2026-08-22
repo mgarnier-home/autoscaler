@@ -60,11 +60,15 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
         docker load -i /opt/buildkit-image.tar
     fi
     
-    docker buildx create \
-    --name builder \
-    --driver docker-container \
-    --use
-    docker buildx inspect --bootstrap builder
+    # Bootstrap the builder and configure the registry credentials in parallel, they don't depend on each other
+    (
+        docker buildx create \
+        --name builder \
+        --driver docker-container \
+        --use
+        docker buildx inspect --bootstrap builder
+    ) &
+    builder_pid=$!
     
     if [[ -z "${_DOCKER_REGISTRY_URL}" ]] || [[ -z "${_DOCKER_REGISTRY_USERNAME}" ]] || [[ -z "${_DOCKER_REGISTRY_PASSWORD}" ]]; then
         echo "DOCKER_REGISTRY_URL, DOCKER_REGISTRY_USERNAME or DOCKER_REGISTRY_PASSWORD is not set. Skipping docker login."
@@ -80,12 +84,13 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
         
         
         # Generate GPG key batch file
+        # Ed25519 keys generate near-instantly, unlike RSA 4096 which is slow on every startup
         cat > gpg_batch.cfg <<EOF
 %no-protection
-Key-Type: RSA
-Key-Length: 4096
-Subkey-Type: RSA
-Subkey-Length: 4096
+Key-Type: EDDSA
+Key-Curve: ed25519
+Subkey-Type: EDDSA
+Subkey-Curve: ed25519
 Name-Real: Docker Credential Pass Key
 Name-Email: docker-pass@example.com
 Expire-Date: 0
@@ -101,6 +106,8 @@ EOF
         
         echo "${_DOCKER_REGISTRY_PASSWORD}" | docker login "${_DOCKER_REGISTRY_URL}" -u "${_DOCKER_REGISTRY_USERNAME}" --password-stdin
     fi
+    
+    wait "${builder_pid}"
 fi
 
 

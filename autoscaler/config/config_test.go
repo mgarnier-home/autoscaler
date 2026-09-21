@@ -1,6 +1,8 @@
 package config
 
 import (
+	"context"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -150,8 +152,12 @@ func TestGetAutoscalerConfig_DefaultValues(t *testing.T) {
 		t.Fatalf("expected default Runtime=runc, got %q", cfg.Runtime)
 	}
 
-	if cfg.RegistryMirrorURL != "" {
-		t.Fatalf("expected empty RegistryMirrorURL, got %q", cfg.RegistryMirrorURL)
+	if cfg.BuildkitHostURL != "" {
+		t.Fatalf("expected empty BuildkitHostURL, got %q", cfg.BuildkitHostURL)
+	}
+
+	if cfg.DeleteScaleSetOnShutdown {
+		t.Fatal("expected default DeleteScaleSetOnShutdown=false, got true")
 	}
 }
 
@@ -243,5 +249,53 @@ func TestLoggerCreation(t *testing.T) {
 
 	if cfg.Logger() == nil {
 		t.Fatal("expected logger")
+	}
+}
+
+// Premier champ booléen de la configuration : on vérifie que la branche
+// reflect.Bool du décodage lit bien la variable d'environnement.
+func TestGetAutoscalerConfig_DeleteScaleSetOnShutdown(t *testing.T) {
+	t.Setenv("REGISTRATION_URL", "https://github.com/org/repo")
+	t.Setenv("GITHUB_TOKEN", "token-value")
+	t.Setenv("RUNNER_IMAGE", "ghcr.io/actions/actions-runner:latest")
+	t.Setenv("DOCKER_REGISTRY_URL", "ghcr.io")
+	t.Setenv("DOCKER_REGISTRY_USERNAME", "runner-user")
+	t.Setenv("DOCKER_REGISTRY_PASSWORD", "runner-pass")
+	t.Setenv("ARTIFACTORY_TOKEN", "artifact-token")
+	t.Setenv("SCALE_SET_NAME", "my-scale-set")
+	t.Setenv("LABELS", "self-hosted")
+	t.Setenv("DOCKER_HOSTS", "tcp://1.1.1.1:2375")
+
+	t.Setenv("DELETE_SCALE_SET_ON_SHUTDOWN", "true")
+
+	cfg, errs := GetAutoscalerConfig()
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+
+	if !cfg.DeleteScaleSetOnShutdown {
+		t.Fatal("expected DeleteScaleSetOnShutdown=true")
+	}
+}
+
+// Un LOG_FORMAT inconnu (faute de frappe, valeur vide) doit retomber sur le
+// format texte, et surtout pas rendre l'autoscaler muet.
+func TestLoggerFallsBackToTextOnUnknownFormat(t *testing.T) {
+	for _, format := range []string{"", "jsonn", "TEXT", "console"} {
+		cfg := &AutoscalerConfig{
+			LogLevel:  "info",
+			LogFormat: format,
+		}
+
+		handler := cfg.Logger().Handler()
+		if !handler.Enabled(context.Background(), slog.LevelInfo) {
+			t.Fatalf("LOG_FORMAT=%q: le logger est muet, il devrait écrire en texte", format)
+		}
+	}
+
+	// Le format json reste évidemment pris en compte, quelle que soit la casse.
+	cfg := &AutoscalerConfig{LogLevel: "info", LogFormat: "JSON"}
+	if _, ok := cfg.Logger().Handler().(*slog.JSONHandler); !ok {
+		t.Fatal("LOG_FORMAT=JSON devrait produire un JSONHandler")
 	}
 }

@@ -6,7 +6,10 @@ import (
 )
 
 type runnerInfo struct {
-	containerID  string
+	containerID string
+	// ID du runner tel qu'enregistré côté github par la config JIT. Sert à le
+	// désenregistrer quand son conteneur disparaît sans avoir exécuté de job.
+	runnerID     int
 	dockerClient *DockerClientWithMetadata
 }
 
@@ -17,10 +20,17 @@ type runnerState struct {
 }
 
 func (runnerState *runnerState) count() int {
+	idle, busy := runnerState.counts()
+	return idle + busy
+}
+
+// counts renvoie le détail du pool : conteneurs libres et conteneurs en train
+// d'exécuter un job. Le calcul du nombre de runners souhaité a besoin des deux
+// séparément, et pas seulement du total.
+func (runnerState *runnerState) counts() (idle int, busy int) {
 	runnerState.mu.Lock()
-	count := len(runnerState.idle) + len(runnerState.busy)
-	runnerState.mu.Unlock()
-	return count
+	defer runnerState.mu.Unlock()
+	return len(runnerState.idle), len(runnerState.busy)
 }
 
 func (runnerState *runnerState) markBusy(name string) error {

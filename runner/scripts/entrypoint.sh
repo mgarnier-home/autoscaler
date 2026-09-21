@@ -3,10 +3,45 @@
 
 _START_DOCKER_SERVICE=${START_DOCKER_SERVICE:="false"}
 
-_DOCKER_MIRROR_URL=${DOCKER_MIRROR_URL:-""}
 _DOCKER_REGISTRY_URL=${DOCKER_REGISTRY_URL:-""}
 _DOCKER_REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME:-""}
 _DOCKER_REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD:-""}
+
+# URL of the buildkit daemon shared between runners (e.g. tcp://buildkit:1234).
+# Left empty, the runner keeps its local buildx builder.
+_BUILDKIT_HOST_URL=${BUILDKIT_HOST_URL:-""}
+_BUILDKIT_BUILDER_NAME="remote-buildkit"
+
+# Configure buildx to use the shared buildkit daemon, so that the build cache is
+# kept between runners. Falls back to the local builder if buildkit is unreachable:
+# a shared cache is an optimisation, not a single point of failure for every runner.
+configure_remote_builder() {
+    if [[ -z "${_BUILDKIT_HOST_URL}" ]]; then
+        echo "BUILDKIT_HOST_URL is not set. Keeping the local buildx builder."
+        return 0
+    fi
+    
+    echo "Creating remote buildx builder on ${_BUILDKIT_HOST_URL}"
+    
+    # A builder of the same name may linger in /home/runner/.docker/buildx
+    docker buildx rm "${_BUILDKIT_BUILDER_NAME}" >/dev/null 2>&1 || true
+    
+    # --bootstrap queries the remote daemon and fails if it is unreachable.
+    # Note that a failed bootstrap still leaves the broken builder selected,
+    # hence the explicit cleanup below.
+    if docker buildx create \
+    --name "${_BUILDKIT_BUILDER_NAME}" \
+    --driver remote \
+    --use \
+    --bootstrap \
+    "${_BUILDKIT_HOST_URL}"; then
+        docker buildx inspect
+    else
+        echo "WARN: buildkit unreachable at ${_BUILDKIT_HOST_URL}. Falling back to the local builder."
+        docker buildx rm "${_BUILDKIT_BUILDER_NAME}" >/dev/null 2>&1 || true
+        docker buildx use default || true
+    fi
+}
 
 # Start docker service if needed (e.g. for docker-in-docker)
 # Ensure buildx, ASDF, NPM, and Maven cache directories exist with correct permissions when mounted as volumes
@@ -25,27 +60,10 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
     
     tmpfile=$(mktemp)
     
-    if [[ -n "${_DOCKER_MIRROR_URL}" ]]; then
-        # Add the mirror URL to the Docker daemon configuration
-        mirror_host="${_DOCKER_MIRROR_URL#http://}"
-        mirror_host="${mirror_host#https://}"
-        mirror_host="${mirror_host%%/*}"
-        
-        jq \
-        --arg url "${_DOCKER_MIRROR_URL}" \
-        --arg host "${mirror_host}" \
-        '
-            .features["containerd-snapshotter"] = true
-            | .["registry-mirrors"] = [$url]
-            | .["insecure-registries"] = [$host]
-        ' \
-        /etc/docker/daemon.json > "${tmpfile}"
-    else
-        # If no mirror URL is provided, just enable the containerd snapshotter feature
-        jq \
-        '.features["containerd-snapshotter"] = true' \
-        /etc/docker/daemon.json > "${tmpfile}"
-    fi
+    # Enable the containerd snapshotter feature
+    jq \
+    '.features["containerd-snapshotter"] = true' \
+    /etc/docker/daemon.json > "${tmpfile}"
     
     sudo mv "${tmpfile}" /etc/docker/daemon.json
     
@@ -59,16 +77,6 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
         echo "Preloading buildx builder image from /opt/buildkit-image.tar"
         docker load -i /opt/buildkit-image.tar
     fi
-    
-    # Bootstrap the builder and configure the registry credentials in parallel, they don't depend on each other
-    (
-        docker buildx create \
-        --name builder \
-        --driver docker-container \
-        --use
-        docker buildx inspect --bootstrap builder
-    ) &
-    builder_pid=$!
     
     if [[ -z "${_DOCKER_REGISTRY_URL}" ]] || [[ -z "${_DOCKER_REGISTRY_USERNAME}" ]] || [[ -z "${_DOCKER_REGISTRY_PASSWORD}" ]]; then
         echo "DOCKER_REGISTRY_URL, DOCKER_REGISTRY_USERNAME or DOCKER_REGISTRY_PASSWORD is not set. Skipping docker login."
@@ -107,7 +115,7 @@ EOF
         echo "${_DOCKER_REGISTRY_PASSWORD}" | docker login "${_DOCKER_REGISTRY_URL}" -u "${_DOCKER_REGISTRY_USERNAME}" --password-stdin
     fi
     
-    wait "${builder_pid}"
+    configure_remote_builder
 fi
 
 

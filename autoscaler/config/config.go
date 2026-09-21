@@ -15,11 +15,11 @@ type AutoscalerConfig struct {
 	RegistrationURL string `key:"REGISTRATION_URL" required:"true"`
 	Token           string `key:"GITHUB_TOKEN" required:"true"`
 
-	RunnerImage       string `key:"RUNNER_IMAGE" required:"true"`
-	RegistryURL       string `key:"DOCKER_REGISTRY_URL" required:"true"`
-	RegistryUsername  string `key:"DOCKER_REGISTRY_USERNAME" required:"true"`
-	RegistryPassword  string `key:"DOCKER_REGISTRY_PASSWORD" required:"true"`
-	RegistryMirrorURL string `key:"DOCKER_REGISTRY_MIRROR_URL" default-value:""`
+	RunnerImage      string `key:"RUNNER_IMAGE" required:"true"`
+	RegistryURL      string `key:"DOCKER_REGISTRY_URL" required:"true"`
+	RegistryUsername string `key:"DOCKER_REGISTRY_USERNAME" required:"true"`
+	RegistryPassword string `key:"DOCKER_REGISTRY_PASSWORD" required:"true"`
+	BuildkitHostURL  string `key:"BUILDKIT_HOST_URL" default-value:""`
 
 	LogLevel  string `key:"LOG_LEVEL" default-value:"info"`
 	LogFormat string `key:"LOG_FORMAT" default-value:"text"`
@@ -29,8 +29,14 @@ type AutoscalerConfig struct {
 	ScaleSetName string   `key:"SCALE_SET_NAME" required:"true"`
 	Labels       []string `key:"LABELS" required:"true"`
 	RunnerGroup  string   `key:"RUNNER_GROUP" default-value:"default"`
-	DockerHosts  []string `key:"DOCKER_HOSTS" required:"true"`
-	Runtime      string   `key:"RUNTIME" default-value:"runc"`
+
+	// Par défaut, un arrêt de l'autoscaler laisse le scale set en place sur
+	// github : le supprimer à chaque redémarrage invaliderait les jobs déjà
+	// assignés et changerait l'ID du scale set. On ne le supprime que lorsque
+	// c'est explicitement demandé (démontage d'un environnement, tests e2e).
+	DeleteScaleSetOnShutdown bool     `key:"DELETE_SCALE_SET_ON_SHUTDOWN" default-value:"false"`
+	DockerHosts              []string `key:"DOCKER_HOSTS" required:"true"`
+	Runtime                  string   `key:"RUNTIME" default-value:"runc"`
 }
 
 func (c *AutoscalerConfig) Logger() *slog.Logger {
@@ -48,20 +54,19 @@ func (c *AutoscalerConfig) Logger() *slog.Logger {
 		lvl = slog.LevelInfo
 	}
 
-	switch c.LogFormat {
-	case "json":
-		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			AddSource: true,
-			Level:     lvl,
-		}))
-	case "text":
-		return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			AddSource: true,
-			Level:     lvl,
-		}))
-	default:
-		return slog.New(slog.DiscardHandler)
+	opts := &slog.HandlerOptions{
+		AddSource: true,
+		Level:     lvl,
 	}
+
+	// Une valeur inconnue retombe sur le format texte, comme pour le niveau de
+	// log ci-dessus. Surtout pas de DiscardHandler ici : une faute de frappe
+	// dans LOG_FORMAT rendrait l'autoscaler totalement muet.
+	if strings.ToLower(c.LogFormat) == "json" {
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	}
+
+	return slog.New(slog.NewTextHandler(os.Stdout, opts))
 }
 
 func GetAutoscalerConfig() (autoscalerCfg *AutoscalerConfig, configErrors []error) {

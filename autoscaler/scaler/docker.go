@@ -19,8 +19,7 @@ import (
 )
 
 const (
-	runnerNpmCacheVolumeName    = "runner-npm-cache"
-	runnerBuildxCacheVolumeName = "runner-buildx-cache"
+	runnerNpmCacheVolumeName = "runner-npm-cache"
 )
 
 type DockerClientWithMetadata struct {
@@ -112,7 +111,7 @@ func createDockerClients(dockerHosts []string, runtime string) ([]*DockerClientW
 }
 
 func createCacheVolumes(ctx context.Context, client *DockerClientWithMetadata) error {
-	for _, volName := range []string{runnerNpmCacheVolumeName, runnerBuildxCacheVolumeName} {
+	for _, volName := range []string{runnerNpmCacheVolumeName} {
 		_, err := client.VolumeCreate(ctx, volume.CreateOptions{
 			Name: volName,
 		})
@@ -124,13 +123,13 @@ func createCacheVolumes(ctx context.Context, client *DockerClientWithMetadata) e
 }
 
 type startContainerParams struct {
-	containerName     string
-	jitConfig         *scaleset.RunnerScaleSetJitRunnerConfig
-	registryURL       string
-	registryUsername  string
-	registryPassword  string
-	runnerImage       string
-	registryMirrorURL string
+	containerName    string
+	jitConfig        *scaleset.RunnerScaleSetJitRunnerConfig
+	registryURL      string
+	registryUsername string
+	registryPassword string
+	runnerImage      string
+	buildkitHostURL  string
 }
 
 func startRunnerContainer(
@@ -149,25 +148,22 @@ func startRunnerContainer(
 				fmt.Sprintf("DOCKER_REGISTRY_URL=%s", startContainerParams.registryURL),
 				fmt.Sprintf("DOCKER_REGISTRY_USERNAME=%s", startContainerParams.registryUsername),
 				fmt.Sprintf("DOCKER_REGISTRY_PASSWORD=%s", startContainerParams.registryPassword),
-				fmt.Sprintf("DOCKER_MIRROR_URL=%s", startContainerParams.registryMirrorURL),
+				fmt.Sprintf("BUILDKIT_HOST_URL=%s", startContainerParams.buildkitHostURL),
 				"START_DOCKER_SERVICE=true",
 			},
 		},
 		&container.HostConfig{
 			Runtime: dockerClient.Runtime,
 			ExtraHosts: []string{
-				"registry-mirror:host-gateway",
+				// Permet au runner de joindre le conteneur buildkit qui publie
+				// son port sur l'hôte docker.
+				"buildkit:host-gateway",
 			},
 			Mounts: []mount.Mount{
 				{
 					Type:   mount.TypeVolume,
 					Source: runnerNpmCacheVolumeName,
 					Target: "/home/runner/.npm",
-				},
-				{
-					Type:   mount.TypeVolume,
-					Source: runnerBuildxCacheVolumeName,
-					Target: "/buildx-cache",
 				},
 			},
 		},

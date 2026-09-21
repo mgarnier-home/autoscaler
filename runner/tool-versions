@@ -1,0 +1,13 @@
+# Versions d'outils pré-installées dans l'image du runner.
+#
+# C'est *le* cache : les layers docker sont partagés par tous les runners d'un
+# hôte, immuables (donc insensibles à la concurrence) et distribués par le
+# registry. Un outil listé ici est disponible instantanément dans les jobs.
+#
+# Un job peut toujours demander une autre version avec `asdf install` : elle
+# sera téléchargée dans son conteneur, sans impacter les autres runners.
+# Ajouter ici les versions réellement standard chez Operis, puis relivrer
+# l'image : c'est une ligne à changer, pas une brique d'infrastructure.
+
+nodejs 20.5.1
+terraform 1.13.3

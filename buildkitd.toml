@@ -1,0 +1,6 @@
+[worker.oci]
+  enabled = true
+  gc = true
+  [[worker.oci.gcpolicy]]
+    keepBytes = "10GB"
+    keepDuration = "336h"

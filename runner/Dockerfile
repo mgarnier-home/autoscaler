@@ -1,21 +1,6 @@
 # Define base images as build arguments (allow customization in CI/CD pipelines)
 ARG GO_BUILD_VERSION="docker.io/golang:bookworm"
-ARG ACTIONS_IMAGE="ghcr.io/actions/actions-runner:2.336.0"
-ARG BUILDKIT_IMAGE="moby/buildkit:buildx-stable-1"
-
-# ---- Buildkit image stage ----
-# Pre-fetches the buildx driver image so it doesn't need to be pulled by the
-# ephemeral in-container docker daemon on every runner container startup.
-FROM quay.io/skopeo/stable:latest AS buildkit-image
-ARG BUILDKIT_IMAGE
-ARG TARGETARCH
-ARG TARGETVARIANT
-RUN skopeo copy \
-  --override-os linux \
-  --override-arch "${TARGETARCH}" \
-  ${TARGETVARIANT:+--override-variant "${TARGETVARIANT}"} \
-  "docker://${BUILDKIT_IMAGE}" \
-  "docker-archive:/buildkit-image.tar:${BUILDKIT_IMAGE}"
+ARG ACTIONS_IMAGE="ghcr.io/actions/actions-runner:2.337.0"
 
 # ---- Build Stage ----
 FROM ${GO_BUILD_VERSION} AS builder
@@ -31,7 +16,7 @@ RUN go install "github.com/asdf-vm/asdf/cmd/asdf@${ASDF_VERSION}"
 
 # ---- Final Stage (Minimal Runtime Image) ----
 FROM ${ACTIONS_IMAGE}
-LABEL authors="Operis"
+LABEL authors="mgarnier11"
 
 # Install packages, docker, gh cli and az cli
 USER root
@@ -46,16 +31,31 @@ ENV PATH="${PATH}:/asdf/shims:/asdf/bin"
 # Copy the ASDF binary from the builder stage
 COPY --from=builder /go/bin/asdf /usr/local/bin/asdf
 
-# Copy the pre-fetched buildkit image so entrypoint.sh can load it instead of pulling it
-COPY --from=buildkit-image /buildkit-image.tar /opt/buildkit-image.tar
-
 # Install asdf plugins
-RUN printf 'Installation plugins asdf\n' \
+COPY ./scripts/asdf-plugins.sh /usr/local/bin/asdf-plugins.sh
+RUN sudo chmod +x /usr/local/bin/asdf-plugins.sh \
+  && printf 'Installation plugins asdf\n' \
   && sudo mkdir ${ASDF_DATA_DIR} \
   && sudo chown -R runner:runner ${ASDF_DATA_DIR} \
-  && asdf plugin add 'nodejs' \
-  && asdf plugin add 'golang' \
-  && asdf plugin add 'terraform' 'https://github.com/asdf-community/asdf-hashicorp.git'
+  && /usr/local/bin/asdf-plugins.sh
+
+# Pré-installation des versions standard. Elles finissent dans un layer docker,
+# donc partagées par tous les runners de l'hôte, en lecture seule et sans
+# concurrence possible : c'est le cache d'outils du runner.
+#
+# `asdf install` sans argument lit le .tool-versions du répertoire courant,
+# installe chaque outil et génère les shims correspondants. Le fichier est
+# ensuite supprimé pour ne pas devenir la version par défaut des jobs.
+COPY --chown=runner:runner ./tool-versions /tmp/asdf-preinstall/.tool-versions
+# Le `cd /` avant le `rm` n'est pas cosmétique : supprimer le répertoire courant
+# fait échouer tout binaire lancé ensuite sur `getwd: no such file or directory`.
+RUN cd /tmp/asdf-preinstall \
+  && printf 'Pre-installation des versions standard\n' \
+  && asdf install \
+  && cd / \
+  && rm -rf /tmp/asdf-preinstall \
+  && asdf list
+
 
 COPY --chown=runner:runner ./scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

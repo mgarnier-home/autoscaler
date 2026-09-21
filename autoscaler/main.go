@@ -76,7 +76,6 @@ func autoscaler(ctx context.Context, config *config.AutoscalerConfig) error {
 	}
 	defer sc.Shutdown(context.WithoutCancel(ctx))
 
-	err = sc.Run(ctx)
 	if err := sc.Run(ctx); !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("listener run failed: %w", err)
 	}

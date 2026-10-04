@@ -2,118 +2,79 @@ package scaler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
-	"sync"
 
 	githubScaleSet "github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
-	"github.com/docker/docker/api/types/container"
 	"github.com/google/uuid"
 	"mgarnier11.fr/docker-autoscaler/config"
+	"mgarnier11.fr/docker-autoscaler/docker"
+	"mgarnier11.fr/docker-autoscaler/github"
 )
 
 type Scaler struct {
-	logger         *slog.Logger
-	scalesetClient *githubScaleSet.Client
-	config         *config.AutoscalerConfig
+	logger       *slog.Logger
+	githubClient *github.GithubClient
+	config       *config.AutoscalerConfig
 
-	runnerScaleSet       *githubScaleSet.RunnerScaleSet
-	messageSessionClient *githubScaleSet.MessageSessionClient
-	listener             *listener.Listener
+	listener *listener.Listener
 
 	runners runnerState
 
-	nextDockerClientIndex int
-	dockerClientMutex     sync.Mutex
-	dockerClients         []*DockerClientWithMetadata
+	// Le pool porte la répartition sur les hôtes docker et la fermeture des
+	// clients ; le scaler n'itère plus jamais sur les hôtes lui-même.
+	dockerPool *docker.Pool
 }
 
 func (this *Scaler) Run(ctx context.Context) error {
-	this.logger.Info("Starting listener for runner scale set", slog.Int("scaleSetID", this.runnerScaleSet.ID))
+	this.logger.Info("Starting listener for runner scale set", slog.Int("scaleSetID", this.githubClient.ScaleSetID()))
 
 	return this.listener.Run(ctx, this)
 }
 
-// removeGitHubRunner désenregistre un runner côté github.
-//
-// À appeler chaque fois qu'un conteneur est détruit sans que son runner ait
-// terminé un job : github ne nettoie tout seul que les runners éphémères ayant
-// effectivement exécuté un job. Sans ça, chaque conteneur de réserve détruit
-// laisse un runner « offline » dans la liste de l'organisation, indéfiniment.
-//
-// Un échec n'est pas bloquant : si github a déjà supprimé le runner, l'appel
-// répond en erreur et il n'y a rien à réparer.
-func (this *Scaler) removeGitHubRunner(ctx context.Context, name string, runnerID int) {
-	if runnerID == 0 {
-		return
+func (this *Scaler) Shutdown(ctx context.Context) {
+	// Seuls les runners libres sont détruits. Ceux qui exécutent un job restent
+	// en vie : un runner est autonome une fois démarré — config JIT, logs poussés
+	// directement sur github — donc il termine son job sans l'autoscaler, et le
+	// détruire couperait ce job. AutoRemove fait disparaître son conteneur dès
+	// qu'il sortira, sans que personne ait à repasser derrière.
+	//
+	// drainIdle rend la map en une seule opération : chaque runner coûte ensuite
+	// un appel github puis un appel docker, et aucune I/O ne doit se faire en
+	// tenant le mutex de runnerState.
+	idleRunners := this.runners.drainIdle()
+
+	removedCount := 0
+	for name, info := range idleRunners {
+		if this.removeIdleRunner(ctx, name, info) {
+			removedCount++
+		}
 	}
 
-	if err := this.scalesetClient.RemoveRunner(ctx, int64(runnerID)); err != nil {
-		this.logger.Warn(
-			"Failed to remove runner registration from github",
-			slog.String("name", name),
-			slog.Int("runnerID", runnerID),
-			slog.String("error", err.Error()),
-		)
-		return
-	}
+	// Ce qui reste debout : les runners occupés, plus les « libres » que github a
+	// signalés occupés ou dont le sort n'a pas pu être établi.
+	_, busyCount := this.runners.counts()
+	survivingCount := busyCount + len(idleRunners) - removedCount
 
 	this.logger.Info(
-		"Removed runner registration from github",
-		slog.String("name", name),
-		slog.Int("runnerID", runnerID),
+		"Runner containers cleaned up",
+		slog.Int("removedCount", removedCount),
+		slog.Int("keptCount", survivingCount),
 	)
-}
 
-func (this *Scaler) Shutdown(ctx context.Context) {
-	// Shutdown all the runners
-	this.logger.Info("Shutting down runners")
-
-	// On copie l'état sous verrou, puis on le relâche avant les appels docker et
-	// github : ceux-ci peuvent être lents, voire pendre si un daemon ne répond
-	// plus, et rien ne doit bloquer le reste du scaler pendant ce temps.
-	// Un nom donné est soit dans idle soit dans busy, jamais dans les deux.
-	this.runners.mu.Lock()
-	toRemove := make(map[string]runnerInfo, len(this.runners.idle)+len(this.runners.busy))
-	maps.Copy(toRemove, this.runners.idle)
-	maps.Copy(toRemove, this.runners.busy)
-	clear(this.runners.idle)
-	clear(this.runners.busy)
-	this.runners.mu.Unlock()
-
-	for name, info := range toRemove {
-		this.logger.Info(
-			"Removing runner",
-			slog.String("name", name),
-			slog.String("containerID", info.containerID),
-		)
-		if err := info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true}); err != nil {
-			this.logger.Error(
-				"Failed to remove runner container",
-				slog.String("name", name),
-				slog.String("containerID", info.containerID),
-				slog.String("error", err.Error()),
-			)
-		}
-
-		this.removeGitHubRunner(ctx, name, info.runnerID)
-	}
+	this.runners.clear()
 
 	// Close the docker clients
-	for _, client := range this.dockerClients {
-		if err := client.Close(); err != nil {
-			this.logger.Error(
-				"Failed to close docker client",
-				slog.String("dockerHost", client.DaemonHost()),
-				slog.String("error", err.Error()),
-			)
-		}
+	if err := this.dockerPool.Close(); err != nil {
+		this.logger.Error("Failed to close docker clients", slog.String("error", err.Error()))
 	}
 
 	// Close the message session client
-	this.messageSessionClient.Close(ctx)
+	if err := this.githubClient.CloseSession(ctx); err != nil {
+		this.logger.Error("Failed to close message session", slog.String("error", err.Error()))
+	}
 
 	// Delete the runner scale set, uniquement si c'est explicitement demandé.
 	// Sur un simple redémarrage on le conserve : le supprimer perdrait les jobs
@@ -121,22 +82,74 @@ func (this *Scaler) Shutdown(ctx context.Context) {
 	if !this.config.DeleteScaleSetOnShutdown {
 		this.logger.Info(
 			"Keeping runner scale set",
-			slog.Int("scaleSetID", this.runnerScaleSet.ID),
+			slog.Int("scaleSetID", this.githubClient.ScaleSetID()),
+		)
+		return
+	}
+
+	// Supprimer le scale set pendant que des runners travaillent encore couperait
+	// leurs jobs, ce que tout l'arrêt cherche justement à éviter.
+	if survivingCount > 0 {
+		this.logger.Warn(
+			"Not deleting runner scale set: runner containers are still alive",
+			slog.Int("scaleSetID", this.githubClient.ScaleSetID()),
+			slog.Int("runners", survivingCount),
 		)
 		return
 	}
 
 	this.logger.Info(
 		"Deleting runner scale set",
-		slog.Int("scaleSetID", this.runnerScaleSet.ID),
+		slog.Int("scaleSetID", this.githubClient.ScaleSetID()),
 	)
-	if err := this.scalesetClient.DeleteRunnerScaleSet(context.WithoutCancel(ctx), this.runnerScaleSet.ID); err != nil {
+	if err := this.githubClient.DeleteScaleSet(context.WithoutCancel(ctx)); err != nil {
 		this.logger.Error(
 			"Failed to delete runner scale set",
-			slog.Int("scaleSetID", this.runnerScaleSet.ID),
+			slog.Int("scaleSetID", this.githubClient.ScaleSetID()),
 			slog.String("error", err.Error()),
 		)
 	}
+}
+
+// removeIdleRunner désenregistre un runner que l'état local croit libre, puis
+// supprime son conteneur si github a confirmé qu'il l'était. Renvoie true si le
+// conteneur a bien été supprimé.
+func (this *Scaler) removeIdleRunner(ctx context.Context, name string, info runnerInfo) bool {
+	removeErr := this.githubClient.RemoveRunner(ctx, info.runnerID)
+
+	if removeErr == nil || errors.Is(removeErr, github.ErrRunnerNotFound) {
+		if err := info.dockerClient.RemoveContainer(ctx, info.containerID); err != nil {
+			this.logger.Error(
+				"Failed to remove idle runner container",
+				slog.String("name", name),
+				slog.String("containerID", docker.ShortID(info.containerID)),
+				slog.String("error", err.Error()),
+			)
+			return false
+		}
+	} else if errors.Is(removeErr, github.ErrJobStillRunning) {
+		this.logger.Info(
+			"Leaving runner container alive: a job is still running on it",
+			slog.String("name", name),
+			slog.String("containerID", docker.ShortID(info.containerID)),
+		)
+		return false
+	} else {
+		this.logger.Warn(
+			"Leaving runner container alive: failed to determine if it is running a job",
+			slog.String("name", name),
+			slog.String("containerID", docker.ShortID(info.containerID)),
+			slog.String("error", removeErr.Error()),
+		)
+		return false
+	}
+
+	this.logger.Info(
+		"Removed idle runner container",
+		slog.String("name", name),
+		slog.String("containerID", docker.ShortID(info.containerID)),
+	)
+	return true
 }
 
 // desiredRunnerCount calcule le nombre total de runners à maintenir.
@@ -234,12 +247,14 @@ func (this *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *githubScale
 		return nil
 	}
 
-	err = info.dockerClient.ContainerRemove(ctx, info.containerID, container.RemoveOptions{Force: true})
-	if err != nil {
+	// RemoveContainer absorbe le cas « déjà disparu » : le conteneur porte
+	// AutoRemove, donc un runner éphémère sort de lui-même en fin de job et
+	// docker le ramasse souvent avant que ce message n'arrive.
+	if err := info.dockerClient.RemoveContainer(ctx, info.containerID); err != nil {
 		this.logger.Error(
 			"Failed to remove runner container",
 			slog.String("name", jobInfo.RunnerName),
-			slog.String("containerID", info.containerID),
+			slog.String("containerID", docker.ShortID(info.containerID)),
 			slog.String("error", err.Error()),
 		)
 	}
@@ -250,70 +265,44 @@ func (this *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *githubScale
 func (this *Scaler) startRunner(ctx context.Context) (string, error) {
 	containerName := fmt.Sprintf("runner-%s", uuid.NewString()[:8])
 
-	jit, err := this.GenerateJitRunnerConfig(ctx, containerName)
+	jit, err := this.githubClient.GenerateJitConfig(ctx, containerName)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate JIT config: %w", err)
 	}
 
 	// Select the next Docker client in a round-robin fashion
-	this.dockerClientMutex.Lock()
-	client := this.dockerClients[this.nextDockerClientIndex]
-	this.logger.Info(
-		"Selected docker client",
-		slog.String("dockerHost", client.DaemonHost()),
-		slog.Int("clientIndex", this.nextDockerClientIndex),
-	)
-	this.nextDockerClientIndex = (this.nextDockerClientIndex + 1) % len(this.dockerClients)
-	this.dockerClientMutex.Unlock()
+	client := this.dockerPool.Next()
 
-	runnerID := 0
-	if jit.Runner != nil {
-		runnerID = jit.Runner.ID
-	}
-
-	containerID, err := startRunnerContainer(
+	containerID, err := client.StartRunner(
 		ctx,
-		client,
-		&startContainerParams{
-			containerName:    containerName,
-			jitConfig:        jit,
-			registryURL:      this.config.RegistryURL,
-			registryUsername: this.config.RegistryUsername,
-			registryPassword: this.config.RegistryPassword,
-			runnerImage:      this.config.RunnerImage,
-			buildkitHostURL:  this.config.BuildkitHostURL,
+		&docker.StartRunnerParams{
+			ContainerName:    containerName,
+			RunnerID:         int64(jit.Runner.ID),
+			ScaleSetName:     this.config.ScaleSetName,
+			JitConfig:        jit.EncodedJITConfig,
+			RegistryURL:      this.config.RegistryURL,
+			RegistryUsername: this.config.RegistryUsername,
+			RegistryPassword: this.config.RegistryPassword,
+			RunnerImage:      this.config.RunnerImage,
+			BuildkitHostURL:  this.config.BuildkitHostURL,
+			PipeRunnerLogs:   this.config.PipeRunnerLogs,
 		},
 	)
 	if err != nil {
-		// Le runner est déjà enregistré côté github : sans ce nettoyage il y
-		// resterait listé alors qu'aucun conteneur ne le porte.
-		this.removeGitHubRunner(ctx, containerName, runnerID)
 		return "", fmt.Errorf("failed to start runner container: %w", err)
 	}
 
+	// L'ID github du runner est relevé maintenant : c'est ce qui permettra de le
+	// désenregistrer à l'arrêt sans avoir à le rechercher par son nom. Il est
+	// aussi gravé en label sur le conteneur, pour survivre à un redémarrage de
+	// l'autoscaler.
 	this.runners.addIdle(containerName, runnerInfo{
 		containerID:  containerID,
-		runnerID:     runnerID,
 		dockerClient: client,
+		runnerID:     int64(jit.Runner.ID),
 	})
 
 	return containerName, nil
-}
-
-func (this *Scaler) GenerateJitRunnerConfig(ctx context.Context, containerName string) (*githubScaleSet.RunnerScaleSetJitRunnerConfig, error) {
-	// Generate JIT config for the runner
-	jit, err := this.scalesetClient.GenerateJitRunnerConfig(
-		ctx,
-		&githubScaleSet.RunnerScaleSetJitRunnerSetting{
-			Name: containerName,
-		},
-		this.runnerScaleSet.ID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate JIT config: %w", err)
-	}
-
-	return jit, nil
 }
 
 var _ listener.Scaler = (*Scaler)(nil)

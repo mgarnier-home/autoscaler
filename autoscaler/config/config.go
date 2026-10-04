@@ -1,11 +1,8 @@
 package config
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
-	"reflect"
-	"strconv"
 	"strings"
 
 	"mgarnier11.fr/docker-autoscaler/utils"
@@ -21,8 +18,9 @@ type AutoscalerConfig struct {
 	RegistryPassword string `key:"DOCKER_REGISTRY_PASSWORD" required:"true"`
 	BuildkitHostURL  string `key:"BUILDKIT_HOST_URL" default-value:""`
 
-	LogLevel  string `key:"LOG_LEVEL" default-value:"info"`
-	LogFormat string `key:"LOG_FORMAT" default-value:"text"`
+	LogLevel       string `key:"LOG_LEVEL" default-value:"info"`
+	LogFormat      string `key:"LOG_FORMAT" default-value:"text"`
+	PipeRunnerLogs bool   `key:"PIPE_RUNNER_LOGS" default-value:"false"`
 
 	MaxRunners   int      `key:"MAX_RUNNERS" default-value:"10"`
 	MinRunners   int      `key:"MIN_RUNNERS" default-value:"0"`
@@ -59,86 +57,15 @@ func (c *AutoscalerConfig) Logger() *slog.Logger {
 		Level:     lvl,
 	}
 
-	// Une valeur inconnue retombe sur le format texte, comme pour le niveau de
+	// Une valeur inconnue retombe sur le format lisible, comme pour le niveau de
 	// log ci-dessus. Surtout pas de DiscardHandler ici : une faute de frappe
 	// dans LOG_FORMAT rendrait l'autoscaler totalement muet.
-	if strings.ToLower(c.LogFormat) == "json" {
+	switch strings.ToLower(c.LogFormat) {
+	case "json":
 		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	case "logfmt":
+		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	default:
+		return slog.New(utils.NewPrettyHandler(os.Stdout, opts))
 	}
-
-	return slog.New(slog.NewTextHandler(os.Stdout, opts))
-}
-
-func GetAutoscalerConfig() (autoscalerCfg *AutoscalerConfig, configErrors []error) {
-	utils.InitEnvFromFile()
-
-	configErrors = []error{}
-
-	autoscalerCfg = &AutoscalerConfig{}
-
-	t := reflect.TypeOf(AutoscalerConfig{})
-
-	for i := 0; i < t.NumField(); i++ {
-		// On parse les fields de la struct autoscalerConfig pour récupérer les valeurs des variables d'environnement correspondantes
-		field := t.Field(i)
-		key := field.Tag.Get("key")
-		// Si la clé est vide, on ignore ce champ
-		if key == "" {
-			continue
-		}
-		defaultValue := field.Tag.Get("default-value")
-		required := field.Tag.Get("required") == "true"
-
-		// On déclare les variables value et err en dehors du switch pour pouvoir les utiliser après le switch
-		var value any
-		var err error
-
-		switch field.Type.Kind() {
-		case reflect.Int:
-			// Quand le type est int, on convertit la valeur par défaut en int avant de l'utiliser
-			defaultInt, err := strconv.Atoi(defaultValue)
-			if err != nil {
-				configErrors = append(configErrors, fmt.Errorf("Invalid default value for field %s: %v", field.Name, err))
-				continue
-			}
-
-			err, value = utils.GetEnvValue(key, defaultInt, required)
-			if err != nil {
-				configErrors = append(configErrors, err)
-				continue
-			}
-
-		case reflect.String:
-			err, value = utils.GetEnvValue(key, defaultValue, required)
-			if err != nil {
-				configErrors = append(configErrors, err)
-				continue
-			}
-		case reflect.Bool:
-			err, value = utils.GetEnvValue(key, defaultValue == "true", required)
-			if err != nil {
-				configErrors = append(configErrors, err)
-				continue
-			}
-		case reflect.Slice:
-			err, value = utils.GetEnvValue(key, strings.Split(defaultValue, ","), required)
-			if err != nil {
-				configErrors = append(configErrors, err)
-				continue
-			}
-		default:
-			configErrors = append(configErrors, fmt.Errorf("Unsupported field type for field %s", field.Name))
-			continue
-		}
-
-		fieldValue := reflect.ValueOf(autoscalerCfg).Elem().FieldByName(field.Name)
-
-		if fieldValue.CanSet() {
-			fieldValue.Set(reflect.ValueOf(value))
-		} else {
-			configErrors = append(configErrors, fmt.Errorf("Cannot set field %s", field.Name))
-		}
-	}
-
-	return autoscalerCfg, configErrors
 }

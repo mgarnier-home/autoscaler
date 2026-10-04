@@ -21,16 +21,17 @@ jobs:
           asdf plugin list
           asdf list
 
+          asdf install terraform 1.16.3
           asdf install terraform 1.13.3
-          asdf set -u terraform 1.13.3
+          asdf set -u terraform 1.16.3
 
           terraform --version
 
           docker --version
           docker run --rm hello-world
 
-          asdf install nodejs 20.5.1
-          asdf set -u nodejs 20.5.1
+          asdf install nodejs 24.21.0
+          asdf set -u nodejs 24.21.0
           node --version
           npm --version
 

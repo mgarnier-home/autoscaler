@@ -3,14 +3,18 @@ package scaler
 import (
 	"fmt"
 	"sync"
+
+	"mgarnier11.fr/docker-autoscaler/docker"
 )
 
 type runnerInfo struct {
-	containerID string
-	// ID du runner tel qu'enregistré côté github par la config JIT. Sert à le
-	// désenregistrer quand son conteneur disparaît sans avoir exécuté de job.
-	runnerID     int
-	dockerClient *DockerClientWithMetadata
+	containerID  string
+	dockerClient *docker.Client
+
+	// runnerID est l'identifiant du runner côté github, relevé sur la config
+	// JIT au démarrage du conteneur. Il évite une recherche par nom au moment
+	// de désenregistrer le runner.
+	runnerID int64
 }
 
 type runnerState struct {
@@ -63,6 +67,29 @@ func (runnerState *runnerState) markDoneUnlocked(name string) (runnerInfo, error
 		return info, nil
 	}
 	return runnerInfo{}, fmt.Errorf("runner %s not found in busy or idle state", name)
+}
+
+// drainIdle retire et renvoie d'un coup tous les runners libres.
+//
+// L'arrêt doit les traiter sans tenir le verrou : chaque runner coûte un appel
+// github puis un appel docker, et aucune I/O ne doit se faire sous mutex. Rendre
+// la map en une opération atomique évite d'avoir à s'en souvenir.
+func (runnerState *runnerState) drainIdle() map[string]runnerInfo {
+	runnerState.mu.Lock()
+	defer runnerState.mu.Unlock()
+	idle := runnerState.idle
+	runnerState.idle = make(map[string]runnerInfo)
+	return idle
+}
+
+// clear vide l'état sans toucher aux conteneurs. Les runners occupés survivent à
+// l'autoscaler : ils ont leur config JIT et poussent leurs logs directement sur
+// github, donc ils terminent leur job seuls.
+func (runnerState *runnerState) clear() {
+	runnerState.mu.Lock()
+	defer runnerState.mu.Unlock()
+	runnerState.idle = make(map[string]runnerInfo)
+	runnerState.busy = make(map[string]runnerInfo)
 }
 
 func (runnerState *runnerState) addIdle(name string, info runnerInfo) {

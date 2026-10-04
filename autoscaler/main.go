@@ -9,9 +9,11 @@ import (
 	"syscall"
 
 	"mgarnier11.fr/docker-autoscaler/config"
+	"mgarnier11.fr/docker-autoscaler/github"
 	"mgarnier11.fr/docker-autoscaler/scaler"
 
 	githubScaleSet "github.com/actions/scaleset"
+	utilsConfig "github.com/mgarnier-home/utils/config"
 )
 
 // systemInfo serves as a base system info
@@ -26,16 +28,15 @@ func systemInfo() githubScaleSet.SystemInfo {
 
 func main() {
 
-	// Get config from env variable or env file
-	// Configuration errors will be collected and printed at once, instead of failing fast on the first error.
-	autoscalerConfig, configErrors := config.GetAutoscalerConfig()
-	if len(configErrors) > 0 {
-		errorString := "Configuration errors:\n"
-		for _, err := range configErrors {
-			errorString += fmt.Sprintf("- %s\n", err)
-		}
+	autoscalerConfig := &config.AutoscalerConfig{}
 
-		panic(errorString)
+	errors := utilsConfig.GetConfig(autoscalerConfig)
+
+	if len(errors) > 0 {
+		for _, err := range errors {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		}
+		os.Exit(1)
 	}
 
 	logger := autoscalerConfig.Logger()
@@ -56,24 +57,21 @@ func main() {
 func autoscaler(ctx context.Context, config *config.AutoscalerConfig) error {
 	logger := config.Logger()
 
-	logger.Info("Creating scaleset client with personal access token")
-	scaleSetClient, err := githubScaleSet.NewClientWithPersonalAccessToken(
-		githubScaleSet.NewClientWithPersonalAccessTokenConfig{
-			GitHubConfigURL:     config.RegistrationURL,
-			PersonalAccessToken: config.Token,
-			SystemInfo:          systemInfo(),
-		},
-	)
+	logger.Info("Creating github client with personal access token")
+	githubClient, err := github.New(logger, config)
 	if err != nil {
-		logger.Error("Failed to create scaleset client", "error", err)
+		logger.Error("Failed to create github client", "error", err)
 		os.Exit(1)
 	}
 
-	sc, err := scaler.New(ctx, logger, scaleSetClient, config)
+	sc, err := scaler.New(ctx, logger, githubClient, config)
 	if err != nil {
 		logger.Error("Failed to create scaler service", "error", err)
 		os.Exit(1)
 	}
+	// L'arrêt doit pouvoir parler à github et docker alors même que le contexte
+	// vient d'être annulé par le signal : sans WithoutCancel, aucun runner libre
+	// ne serait désenregistré ni supprimé.
 	defer sc.Shutdown(context.WithoutCancel(ctx))
 
 	if err := sc.Run(ctx); !errors.Is(err, context.Canceled) {

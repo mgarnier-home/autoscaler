@@ -97,8 +97,8 @@ if [[ ${_START_DOCKER_SERVICE} == "true" ]]; then
 %no-protection
 Key-Type: EDDSA
 Key-Curve: ed25519
-Subkey-Type: EDDSA
-Subkey-Curve: ed25519
+Subkey-Type: ECDH
+Subkey-Curve: cv25519
 Name-Real: Docker Credential Pass Key
 Name-Email: docker-pass@example.com
 Expire-Date: 0

@@ -22,6 +22,7 @@ type Scaler struct {
 	listener *listener.Listener
 
 	runners runnerState
+	stats   statsState
 
 	// Le pool porte la répartition sur les hôtes docker et la fermeture des
 	// clients ; le scaler n'itère plus jamais sur les hôtes lui-même.
@@ -192,7 +193,9 @@ func (this *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (in
 		)
 
 		for range scaleUp {
-			if _, err := this.startRunner(ctx); err != nil {
+			_, err := this.startRunner(ctx)
+			this.stats.recordStart(err)
+			if err != nil {
 				// On renvoie le compte réel : les runners déjà démarrés existent
 				// bel et bien, et le prochain lot de messages retentera le reste.
 				this.logger.Error("Failed to start runner", slog.String("error", err.Error()))

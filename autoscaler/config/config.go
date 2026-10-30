@@ -21,6 +21,7 @@ type AutoscalerConfig struct {
 	LogLevel       string `key:"LOG_LEVEL" default-value:"info"`
 	LogFormat      string `key:"LOG_FORMAT" default-value:"text"`
 	PipeRunnerLogs bool   `key:"PIPE_RUNNER_LOGS" default-value:"false"`
+	HTTPPort       int    `key:"HTTP_PORT" default-value:"8080"`
 
 	MaxRunners   int      `key:"MAX_RUNNERS" default-value:"10"`
 	MinRunners   int      `key:"MIN_RUNNERS" default-value:"0"`

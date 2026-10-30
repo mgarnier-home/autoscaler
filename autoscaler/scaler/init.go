@@ -48,21 +48,11 @@ func New(ctx context.Context, logger *slog.Logger, githubClient *github.GithubCl
 	}
 	recovered := recoverRunners(logger, runnerContainers)
 
-	listener, err := listener.New(githubClient.MessageSession(), listener.Config{
-		ScaleSetID: githubClient.ScaleSetID(),
-		MaxRunners: config.MaxRunners,
-		Logger:     logger.WithGroup("listener"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create listener: %w", err)
-	}
-
 	scaler := &Scaler{
 		logger:       logger,
 		githubClient: githubClient,
 		config:       config,
 		dockerPool:   dockerPool,
-		listener:     listener,
 		runners: runnerState{
 			// Les runners repris sont tous placés en idle : ni docker ni github
 			// ne disent lequel exécute un job — les statistiques du scale set
@@ -73,6 +63,17 @@ func New(ctx context.Context, logger *slog.Logger, githubClient *github.GithubCl
 			idle: recovered,
 			busy: make(map[string]runnerInfo),
 		},
+	}
+
+	// Le listener transmet au scaler les statistiques jointes à chaque message
+	// github, que GET /stats expose ensuite.
+	scaler.listener, err = listener.New(githubClient.MessageSession(), listener.Config{
+		ScaleSetID: githubClient.ScaleSetID(),
+		MaxRunners: config.MaxRunners,
+		Logger:     logger.WithGroup("listener"),
+	}, listener.WithMetricsRecorder(&scaler.stats))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create listener: %w", err)
 	}
 
 	return scaler, nil

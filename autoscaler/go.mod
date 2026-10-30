@@ -8,7 +8,7 @@ require (
 	github.com/google/go-github/v79 v79.0.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
-	github.com/mgarnier-home/utils v1.2.0
+	github.com/mgarnier-home/utils v1.4.0
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -28,6 +28,7 @@ require (
 	github.com/go-ping/ping v1.2.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
+	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect

@@ -18,6 +18,7 @@ import (
 	scaleset "github.com/actions/scaleset"
 	"github.com/actions/scaleset/listener"
 	"github.com/google/uuid"
+	"github.com/mgarnier-home/utils/buildinfo"
 	"mgarnier11.fr/docker-autoscaler/config"
 )
 
@@ -34,8 +35,8 @@ func systemInfo() scaleset.SystemInfo {
 	return scaleset.SystemInfo{
 		System:    "dockerscaleset",
 		Subsystem: "dockerscaleset",
-		CommitSHA: "NA",    // TODO: passer ce parametre au build
-		Version:   "0.1.0", // TODO: passer ce parametre au build
+		CommitSHA: buildinfo.Get().Commit,
+		Version:   buildinfo.Version,
 	}
 }
 

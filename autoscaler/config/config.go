@@ -36,6 +36,7 @@ type AutoscalerConfig struct {
 	DeleteScaleSetOnShutdown bool     `key:"DELETE_SCALE_SET_ON_SHUTDOWN" default-value:"false"`
 	DockerHosts              []string `key:"DOCKER_HOSTS" required:"true"`
 	Runtime                  string   `key:"RUNTIME" default-value:"runc"`
+	DockerNetwork            string   `key:"DOCKER_NETWORK" default-value:""`
 }
 
 func (c *AutoscalerConfig) Logger() *slog.Logger {

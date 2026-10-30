@@ -8,6 +8,8 @@ services:
     volumes:
       - buildkit-cache:/var/lib/buildkit
       - ./buildkitd.toml:/etc/buildkit/buildkitd.toml
+    networks:
+      - buildkit
 
   autoscaler:
     build:
@@ -31,6 +33,8 @@ services:
       DOCKER_HOSTS: "unix:///var/run/docker.sock"
       RUNTIME: "sysbox-runc"
       BUILDKIT_HOST_URL: "tcp://buildkit:1234"
+      # Les runners rejoignent le réseau de buildkit pour le joindre par son nom.
+      DOCKER_NETWORK: "autoscaler-buildkit"
 
   runner:
     image: runner
@@ -40,3 +44,9 @@ services:
 
 volumes:
   buildkit-cache:
+
+# Nom fixe : sans lui, compose préfixerait le réseau du nom du projet, et
+# DOCKER_NETWORK ne le trouverait pas.
+networks:
+  buildkit:
+    name: autoscaler-buildkit

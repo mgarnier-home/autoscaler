@@ -1,6 +1,16 @@
 package docker
 
-import "testing"
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+
+	dockerclient "github.com/docker/docker/client"
+)
 
 // runnerFromLabels est le point d'entrée de la reprise d'état : les labels du
 // conteneur remplacent un fichier persisté, puisqu'ils ne peuvent pas décrire un
@@ -104,5 +114,54 @@ func TestShortID(t *testing.T) {
 	}
 	if got := ShortID("abc"); got != "abc" {
 		t.Fatalf("ShortID(court) = %q, attendu %q", got, "abc")
+	}
+}
+
+// fakeDockerHost simule l'API docker d'un hôte qui ne connaît que les réseaux
+// donnés.
+func fakeDockerHost(t *testing.T, networks ...string) *Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.Contains(r.URL.Path, "/networks/") || !slices.Contains(networks, name) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"network ` + name + ` not found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"Name":"` + name + `","Id":"abc"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := dockerclient.NewClientWithOpts(
+		dockerclient.WithHost("tcp://"+srv.Listener.Addr().String()),
+		dockerclient.WithVersion("1.47"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Client{Client: client}
+}
+
+func TestCheckNetwork(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	ctx := context.Background()
+
+	pool := &Pool{logger: logger, clients: []*Client{fakeDockerHost(t, "autoscaler-buildkit"), fakeDockerHost(t, "autoscaler-buildkit")}}
+	if err := pool.CheckNetwork(ctx, "autoscaler-buildkit"); err != nil {
+		t.Fatalf("réseau présent sur tous les hôtes : %v", err)
+	}
+
+	pool = &Pool{logger: logger, clients: []*Client{fakeDockerHost(t, "autoscaler-buildkit"), fakeDockerHost(t)}}
+	err := pool.CheckNetwork(ctx, "autoscaler-buildkit")
+	if err == nil || !strings.Contains(err.Error(), "autoscaler-buildkit") {
+		t.Fatalf("réseau absent d'un hôte : erreur %v, attendu une erreur qui nomme le réseau", err)
+	}
+
+	// Sans réseau configuré, les runners restent sur le réseau par défaut : rien
+	// à vérifier, aucun appel au daemon.
+	pool = &Pool{logger: logger, clients: []*Client{fakeDockerHost(t)}}
+	if err := pool.CheckNetwork(ctx, ""); err != nil {
+		t.Fatalf("aucun réseau configuré : %v", err)
 	}
 }

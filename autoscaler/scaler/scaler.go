@@ -289,6 +289,7 @@ func (this *Scaler) startRunner(ctx context.Context) (string, error) {
 			RunnerImage:      this.config.RunnerImage,
 			BuildkitHostURL:  this.config.BuildkitHostURL,
 			PipeRunnerLogs:   this.config.PipeRunnerLogs,
+			DockerNetwork:    this.config.DockerNetwork,
 		},
 	)
 	if err != nil {

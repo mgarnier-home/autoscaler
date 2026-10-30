@@ -27,6 +27,10 @@ func New(ctx context.Context, logger *slog.Logger, githubClient *github.GithubCl
 		return nil, fmt.Errorf("failed to create docker clients: %w", err)
 	}
 
+	if err := dockerPool.CheckNetwork(ctx, config.DockerNetwork); err != nil {
+		return nil, err
+	}
+
 	if err := dockerPool.PullRunnerImage(ctx, &docker.PullImageParams{
 		RegistryURL:      config.RegistryURL,
 		RegistryUsername: config.RegistryUsername,

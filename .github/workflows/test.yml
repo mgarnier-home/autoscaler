@@ -1,0 +1,45 @@
+name: Tests
+
+# Lancé sur chaque pull request vers main et sur chaque push sur main (ce qui détecte une fusion
+# cassée). La publication des images Docker est un workflow séparé, déclenché par un tag
+# (publish.yml).
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+# Annule une exécution en cours sur la même référence dès qu'un nouveau push arrive.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    # Le module Go est dans autoscaler/, pas à la racine.
+    defaults:
+      run:
+        working-directory: autoscaler
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+
+      - name: Installation de Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: autoscaler/go.mod
+          cache-dependency-path: autoscaler/go.sum
+
+      - name: Analyse statique
+        run: go vet ./...
+
+      # Le test de bout en bout reste ignoré : il n'est lancé qu'avec E2E=true.
+      - name: Tests
+        run: go test -race ./...

@@ -8,23 +8,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"mgarnier11.fr/docker-autoscaler/api"
 	"mgarnier11.fr/docker-autoscaler/config"
 	"mgarnier11.fr/docker-autoscaler/github"
 	"mgarnier11.fr/docker-autoscaler/scaler"
 
-	githubScaleSet "github.com/actions/scaleset"
 	utilsConfig "github.com/mgarnier-home/utils/config"
 )
-
-// systemInfo serves as a base system info
-func systemInfo() githubScaleSet.SystemInfo {
-	return githubScaleSet.SystemInfo{
-		System:    "dockerscaleset",
-		Subsystem: "dockerscaleset",
-		CommitSHA: "NA",    // TODO: passer ce parametre au build
-		Version:   "0.1.0", // TODO: passer ce parametre au build
-	}
-}
 
 func main() {
 
@@ -73,6 +63,8 @@ func autoscaler(ctx context.Context, config *config.AutoscalerConfig) error {
 	// vient d'être annulé par le signal : sans WithoutCancel, aucun runner libre
 	// ne serait désenregistré ni supprimé.
 	defer sc.Shutdown(context.WithoutCancel(ctx))
+
+	go api.Serve(ctx, logger, config.HTTPPort, api.NewHandler(sc.Stats))
 
 	if err := sc.Run(ctx); !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("listener run failed: %w", err)

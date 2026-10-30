@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
@@ -155,6 +156,25 @@ func (this *Pool) CreateCacheVolumes(ctx context.Context) error {
 	return nil
 }
 
+// CheckNetwork vérifie que le réseau des runners existe sur chaque hôte. Sans
+// lui, chaque création de conteneur échouerait : mieux vaut refuser de démarrer
+// avec un message clair. Un nom vide laisse les runners sur le réseau par défaut.
+//
+// Le réseau doit être un réseau défini par l'utilisateur (pas « bridge ») pour
+// que les runners joignent buildkit par son nom. Créé par compose, il lui faut
+// un `name:` fixe, sans quoi compose le préfixe du nom du projet.
+func (this *Pool) CheckNetwork(ctx context.Context, name string) error {
+	if name == "" {
+		return nil
+	}
+	for _, client := range this.clients {
+		if _, err := client.NetworkInspect(ctx, name, network.InspectOptions{}); err != nil {
+			return fmt.Errorf("docker network %q unavailable on host %s: %w", name, client.DaemonHost(), err)
+		}
+	}
+	return nil
+}
+
 // ListRunners rassemble les conteneurs runner encore en cours sur tous les
 // hôtes. Chaque conteneur porte le client de l'hôte où il a été trouvé, sans
 // quoi l'appelant ne saurait pas à qui parler pour le supprimer.
@@ -272,6 +292,7 @@ type StartRunnerParams struct {
 	RunnerImage      string
 	BuildkitHostURL  string
 	PipeRunnerLogs   bool
+	DockerNetwork    string
 }
 
 func (this *Client) StartRunner(ctx context.Context, params *StartRunnerParams) (containerID string, err error) {
@@ -296,7 +317,8 @@ func (this *Client) StartRunner(ctx context.Context, params *StartRunnerParams) 
 			},
 		},
 		&container.HostConfig{
-			Runtime: this.Runtime,
+			Runtime:     this.Runtime,
+			NetworkMode: container.NetworkMode(params.DockerNetwork),
 			// Un runner est éphémère : il exécute un job puis sort. AutoRemove le
 			// fait disparaître à cet instant, y compris quand l'autoscaler n'est
 			// plus là pour le supprimer — c'est ce qui empêche les conteneurs de
@@ -482,12 +504,12 @@ func (this *Client) attachContainerLogsToStdout(ctx context.Context, containerID
 
 		stdout := &prefixWriter{
 			w:      os.Stdout,
-			prefix: []byte(fmt.Sprintf("[%s] ", ShortID(containerID))),
+			prefix: fmt.Appendf(nil, "[%s] ", ShortID(containerID)),
 		}
 
 		stderr := &prefixWriter{
 			w:      os.Stderr,
-			prefix: []byte(fmt.Sprintf("[%s] ", ShortID(containerID))),
+			prefix: fmt.Appendf(nil, "[%s] ", ShortID(containerID)),
 		}
 
 		// Le conteneur portant AutoRemove, docker le supprime en fin de job et le

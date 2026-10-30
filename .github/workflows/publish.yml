@@ -1,0 +1,118 @@
+name: Publication
+
+run-name: Publication de ${{ github.ref_name }}
+
+# Lancé par le push d'un tag de version (ex. v1.2.3). Le motif ci-dessous est large : le job
+# « version » vérifie le format exact et que le tag est sur main avant toute construction.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Une seule publication à la fois : les images intermédiaires « amd64 » et « arm64 » sont
+# communes à toutes les versions, deux publications en parallèle pourraient se les échanger.
+# La suivante attend au lieu d'annuler (une publication interrompue laisserait des images à
+# moitié poussées).
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Vérification du tag
+    runs-on: linux/amd64
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      date: ${{ steps.check.outputs.date }}
+    steps:
+      # Historique complet pour pouvoir vérifier que le commit du tag appartient à main.
+      - name: Récupération du code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Le nom du tag passe par une variable d'environnement, jamais par interpolation directe
+      # dans le script : un nom de tag malveillant ne peut ainsi pas injecter de commande.
+      - name: Vérification du format vX.Y.Z et de la présence sur main
+        id: check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag invalide « $TAG » : format attendu vX.Y.Z (ex. v1.2.3)."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Le tag « $TAG » ne pointe pas sur un commit de main."
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Images ${{ matrix.arch }}
+    needs: version
+    runs-on: linux/${{ matrix.arch }}
+    strategy:
+      matrix:
+        arch:
+          - amd64
+          - arm64
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v7
+
+      # Construction native sur le runner de l'architecture ; l'authentification Docker Hub est
+      # celle déjà configurée sur les runners auto-hébergés. Les tags « amd64 » et « arm64 »
+      # sont ceux que déploie orchestrator.
+      - name: Construction et envoi de l'image autoscaler
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.version.outputs.version }}
+          BUILD_DATE: ${{ needs.version.outputs.date }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          docker buildx build \
+            --build-arg "VERSION=$VERSION" \
+            --build-arg "COMMIT=$COMMIT" \
+            --build-arg "DATE=$BUILD_DATE" \
+            --tag "mgarnier11/autoscaler:$ARCH" \
+            --cache-from "type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache-$ARCH" \
+            --cache-to "type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache-$ARCH,mode=max" \
+            --push \
+            autoscaler
+
+      - name: Construction et envoi de l'image runner
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker buildx build \
+            --tag "mgarnier11/runner:$ARCH" \
+            --cache-from "type=registry,ref=registry.mgarnier11.fr/runner:buildcache-$ARCH" \
+            --cache-to "type=registry,ref=registry.mgarnier11.fr/runner:buildcache-$ARCH,mode=max" \
+            --push \
+            runner
+
+  publish:
+    name: Images multi-arch
+    needs: [version, build]
+    runs-on: linux/amd64
+    steps:
+      - name: Publication des tags version et latest
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            --tag "mgarnier11/autoscaler:$VERSION" \
+            --tag mgarnier11/autoscaler:latest \
+            mgarnier11/autoscaler:amd64 \
+            mgarnier11/autoscaler:arm64
+
+          docker buildx imagetools create \
+            --tag "mgarnier11/runner:$VERSION" \
+            --tag mgarnier11/runner:latest \
+            mgarnier11/runner:amd64 \
+            mgarnier11/runner:arm64

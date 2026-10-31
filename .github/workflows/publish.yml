@@ -80,8 +80,6 @@ jobs:
             --build-arg "COMMIT=$COMMIT" \
             --build-arg "DATE=$BUILD_DATE" \
             --tag "mgarnier11/autoscaler:$ARCH" \
-            --cache-from "type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache-$ARCH" \
-            --cache-to "type=registry,ref=registry.mgarnier11.fr/autoscaler:buildcache-$ARCH,mode=max" \
             --push \
             autoscaler
 
@@ -91,8 +89,6 @@ jobs:
         run: |
           docker buildx build \
             --tag "mgarnier11/runner:$ARCH" \
-            --cache-from "type=registry,ref=registry.mgarnier11.fr/runner:buildcache-$ARCH" \
-            --cache-to "type=registry,ref=registry.mgarnier11.fr/runner:buildcache-$ARCH,mode=max" \
             --push \
             runner
 

@@ -27,6 +27,9 @@ type Scaler struct {
 	// Le pool porte la répartition sur les hôtes docker et la fermeture des
 	// clients ; le scaler n'itère plus jamais sur les hôtes lui-même.
 	dockerPool *docker.Pool
+
+	// Labels supplémentaires des conteneurs runner, lus depuis CONTAINER_LABELS.
+	containerLabels map[string]string
 }
 
 func (this *Scaler) Run(ctx context.Context) error {
@@ -290,6 +293,7 @@ func (this *Scaler) startRunner(ctx context.Context) (string, error) {
 			BuildkitHostURL:  this.config.BuildkitHostURL,
 			PipeRunnerLogs:   this.config.PipeRunnerLogs,
 			DockerNetwork:    this.config.DockerNetwork,
+			Labels:           this.containerLabels,
 		},
 	)
 	if err != nil {

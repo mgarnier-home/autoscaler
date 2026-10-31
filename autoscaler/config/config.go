@@ -37,6 +37,7 @@ type AutoscalerConfig struct {
 	DockerHosts              []string `key:"DOCKER_HOSTS" required:"true"`
 	Runtime                  string   `key:"RUNTIME" default-value:"runc"`
 	DockerNetwork            string   `key:"DOCKER_NETWORK" default-value:""`
+	ContainerLabels          []string `key:"CONTAINER_LABELS"`
 }
 
 func (c *AutoscalerConfig) Logger() *slog.Logger {

@@ -42,12 +42,16 @@ Variables lues par `autoscaler/config/config.go` : `REGISTRATION_URL`, `GITHUB_T
 `RUNTIME`, `DOCKER_HOSTS`, `DOCKER_REGISTRY_URL`, `DOCKER_REGISTRY_USERNAME`,
 `DOCKER_REGISTRY_PASSWORD`, `BUILDKIT_HOST_URL`, `PIPE_RUNNER_LOGS`,
 `DELETE_SCALE_SET_ON_SHUTDOWN`, `LOG_LEVEL`, `LOG_FORMAT`, `HTTP_PORT` (port de l'API, 8080 par
-défaut), `DOCKER_NETWORK`.
+défaut), `DOCKER_NETWORK`, `CONTAINER_LABELS`.
 
 `DOCKER_NETWORK` rattache les runners à un réseau docker, pour qu'ils joignent buildkit par son nom
 (`BUILDKIT_HOST_URL: tcp://buildkit:1234`). Ce réseau doit être défini par l'utilisateur, avec un
 `name:` fixe s'il est créé par compose, et exister sur chaque hôte de `DOCKER_HOSTS` :
 l'autoscaler refuse de démarrer sinon. Vide, les runners restent sur le réseau par défaut.
+
+`CONTAINER_LABELS` (`clé=valeur,clé2=valeur2`, vide par défaut) ajoute des labels docker aux
+conteneurs runner. Une entrée mal formée ou une clé en `mgarnier11.fr/docker-autoscaler.*`
+(labels internes de la reprise d'état) empêche l'autoscaler de démarrer.
 
 ## Publication
 

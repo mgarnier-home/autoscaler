@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -41,10 +42,36 @@ const (
 	//
 	// Ils servent aussi à retrouver ces conteneurs à la main :
 	//   docker ps -a --filter "label=mgarnier11.fr/docker-autoscaler.scaleset=<nom>"
-	runnerScaleSetLabel = "mgarnier11.fr/docker-autoscaler.scaleset"
-	runnerNameLabel     = "mgarnier11.fr/docker-autoscaler.runner"
-	runnerIDLabel       = "mgarnier11.fr/docker-autoscaler.runner-id"
+	internalLabelPrefix = "mgarnier11.fr/docker-autoscaler."
+	runnerScaleSetLabel = internalLabelPrefix + "scaleset"
+	runnerNameLabel     = internalLabelPrefix + "runner"
+	runnerIDLabel       = internalLabelPrefix + "runner-id"
 )
+
+// ParseLabels lit les labels supplémentaires des conteneurs runner, au format
+// clé=valeur. Les labels internes sont refusés : les écraser casserait la
+// reprise d'état au démarrage.
+func ParseLabels(entries []string) (map[string]string, error) {
+	labels := make(map[string]string)
+
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		key, value, found := strings.Cut(entry, "=")
+		key = strings.TrimSpace(key)
+		if !found || key == "" {
+			return nil, fmt.Errorf("invalid container label %q: expected key=value", entry)
+		}
+		if strings.HasPrefix(key, internalLabelPrefix) {
+			return nil, fmt.Errorf("container label %q is reserved by the autoscaler", key)
+		}
+		labels[key] = strings.TrimSpace(value)
+	}
+
+	return labels, nil
+}
 
 // ShortID rend l'identifiant court d'un conteneur, celui que docker lui-même
 // affiche. Les 64 caractères complets noient les lignes de log sans jamais
@@ -293,20 +320,26 @@ type StartRunnerParams struct {
 	BuildkitHostURL  string
 	PipeRunnerLogs   bool
 	DockerNetwork    string
+
+	// Labels supplémentaires, déjà validés par ParseLabels.
+	Labels map[string]string
 }
 
 func (this *Client) StartRunner(ctx context.Context, params *StartRunnerParams) (containerID string, err error) {
+	labels := map[string]string{
+		runnerScaleSetLabel: params.ScaleSetName,
+		runnerNameLabel:     params.ContainerName,
+		runnerIDLabel:       strconv.FormatInt(params.RunnerID, 10),
+	}
+	maps.Copy(labels, params.Labels)
+
 	runnerContainer, err := this.ContainerCreate(
 		ctx,
 		&container.Config{
-			Image: params.RunnerImage,
-			User:  "runner",
-			Cmd:   []string{"/home/runner/run.sh"},
-			Labels: map[string]string{
-				runnerScaleSetLabel: params.ScaleSetName,
-				runnerNameLabel:     params.ContainerName,
-				runnerIDLabel:       strconv.FormatInt(params.RunnerID, 10),
-			},
+			Image:  params.RunnerImage,
+			User:   "runner",
+			Cmd:    []string{"/home/runner/run.sh"},
+			Labels: labels,
 			Env: []string{
 				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", params.JitConfig),
 				fmt.Sprintf("DOCKER_REGISTRY_URL=%s", params.RegistryURL),

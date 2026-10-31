@@ -14,6 +14,13 @@ import (
 func New(ctx context.Context, logger *slog.Logger, githubClient *github.GithubClient, config *config.AutoscalerConfig) (*Scaler, error) {
 	logger.Info("Starting scaler", "scaleSetName", config.ScaleSetName)
 
+	// Validés avant tout appel à github : une erreur de configuration ne doit
+	// pas laisser un scale set créé derrière elle.
+	containerLabels, err := docker.ParseLabels(config.ContainerLabels)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := githubClient.EnsureScaleSet(ctx); err != nil {
 		return nil, fmt.Errorf("failed to create runner scale set: %w", err)
 	}
@@ -57,6 +64,8 @@ func New(ctx context.Context, logger *slog.Logger, githubClient *github.GithubCl
 		githubClient: githubClient,
 		config:       config,
 		dockerPool:   dockerPool,
+
+		containerLabels: containerLabels,
 		runners: runnerState{
 			// Les runners repris sont tous placés en idle : ni docker ni github
 			// ne disent lequel exécute un job — les statistiques du scale set

@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -163,5 +164,45 @@ func TestCheckNetwork(t *testing.T) {
 	pool = &Pool{logger: logger, clients: []*Client{fakeDockerHost(t)}}
 	if err := pool.CheckNetwork(ctx, ""); err != nil {
 		t.Fatalf("aucun réseau configuré : %v", err)
+	}
+}
+
+func TestParseLabels(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []string
+		want    map[string]string
+		wantErr bool
+	}{
+		{name: "aucun label", entries: nil, want: map[string]string{}},
+		{name: "entrées vides ignorées", entries: []string{"", "  "}, want: map[string]string{}},
+		{
+			name:    "plusieurs labels, espaces retirés",
+			entries: []string{"com.example.team=ci", " traefik.enable = false "},
+			want:    map[string]string{"com.example.team": "ci", "traefik.enable": "false"},
+		},
+		{name: "valeur vide acceptée", entries: []string{"flag="}, want: map[string]string{"flag": ""}},
+		{name: "valeur contenant un =", entries: []string{"a=b=c"}, want: map[string]string{"a": "b=c"}},
+		{name: "sans =", entries: []string{"nope"}, wantErr: true},
+		{name: "clé vide", entries: []string{"=value"}, wantErr: true},
+		{name: "label interne refusé", entries: []string{runnerIDLabel + "=1"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseLabels(tt.entries)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseLabels(%q) = %v, want error", tt.entries, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseLabels(%q) error: %v", tt.entries, err)
+			}
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("ParseLabels(%q) = %v, want %v", tt.entries, got, tt.want)
+			}
+		})
 	}
 }

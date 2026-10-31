@@ -364,11 +364,7 @@ func (this *Client) StartRunner(ctx context.Context, params *StartRunnerParams) 
 			// Les caches ne risquent rien : AutoRemove ne détruit que les volumes
 			// anonymes, or ceux montés ici sont nommés.
 			AutoRemove: true,
-			ExtraHosts: []string{
-				// Permet au runner de joindre le conteneur buildkit qui publie
-				// son port sur l'hôte docker.
-				"buildkit:host-gateway",
-			},
+			ExtraHosts: runnerExtraHosts(params.DockerNetwork),
 			Mounts: []mount.Mount{
 				{
 					Type:   mount.TypeVolume,
@@ -472,6 +468,17 @@ func (this *Client) listRunners(ctx context.Context, scaleSetName string) ([]Run
 // plutôt que de produire un ID nul : github répondrait « introuvable » au
 // désenregistrement, donc « runner libre », et l'arrêt détruirait un conteneur
 // peut-être en plein job.
+// runnerExtraHosts rend les entrées /etc/hosts du runner. Sans réseau dédié, le
+// runner joint buildkit par le port qu'il publie sur l'hôte docker. Sur un
+// réseau, surtout pas d'entrée : /etc/hosts passe avant le DNS de docker et
+// masquerait le vrai conteneur buildkit.
+func runnerExtraHosts(dockerNetwork string) []string {
+	if dockerNetwork != "" {
+		return nil
+	}
+	return []string{"buildkit:host-gateway"}
+}
+
 func runnerFromLabels(labels map[string]string) (name string, runnerID int64, ok bool) {
 	name = labels[runnerNameLabel]
 	if name == "" {

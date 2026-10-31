@@ -206,3 +206,13 @@ func TestParseLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestRunnerExtraHosts(t *testing.T) {
+	if got := runnerExtraHosts(""); !slices.Equal(got, []string{"buildkit:host-gateway"}) {
+		t.Errorf("runnerExtraHosts(\"\") = %v, want [buildkit:host-gateway]", got)
+	}
+	// Avec un réseau, l'entrée masquerait la résolution DNS du conteneur buildkit.
+	if got := runnerExtraHosts("autoscaler-buildkit"); got != nil {
+		t.Errorf("runnerExtraHosts(network) = %v, want nil", got)
+	}
+}
